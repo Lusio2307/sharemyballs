@@ -4,8 +4,13 @@ extern crate core;
 #[macro_use]
 extern crate log;
 
+use std::path::Path;
+
+use clap::Parser;
+use directories::ProjectDirs;
 use iced::{Application, Settings};
 
+use crate::capture::capturer::Args;
 use crate::capture::ScreenCapture;
 use crate::gui::app::App;
 use crate::output::OutputSink;
@@ -21,6 +26,7 @@ mod output;
 mod performance_profiler;
 mod result;
 mod signaller;
+mod webui;
 
 #[tokio::main]
 async fn main() {
@@ -43,7 +49,22 @@ async fn main() {
         .unwrap_or_else(|_| {
             eprintln!("Failed to initialize logger");
         });
+    let args = Args::parse();
+    let config = config::load(config_path(&args).as_path()).unwrap();
+
+    if config.webui.enabled {
+        let port = config.webui.port;
+        tokio::spawn(async move {
+            if let Err(e) = webui::start(port).await {
+                error!(
+                    "Failed to start webui on port {port}: {e} (falling back to configured signaller)"
+                );
+            }
+        });
+    }
+
     App::run(Settings {
+        id: None,
         window: iced::window::Settings {
             size: (640, 373),
             min_size: Some((400, 300)),
@@ -56,7 +77,34 @@ async fn main() {
             ),
             ..Default::default()
         },
-        ..Default::default()
+        flags: (args, config),
+        default_font: Default::default(),
+        default_text_size: 20.0,
+        text_multithreading: false,
+        antialiasing: false,
+        exit_on_close_request: true,
+        try_opengles_first: false,
     })
     .unwrap();
+}
+
+fn config_path(args: &Args) -> std::path::PathBuf {
+    if let Some(config_path) = &args.config {
+        Path::new(config_path).to_path_buf()
+    } else {
+        if cfg!(target_os = "windows") {
+            Path::new("config.toml").to_path_buf()
+        } else if cfg!(target_os = "macos") {
+            let config_dir = ProjectDirs::from("", "", "Mira Sharer")
+                .unwrap()
+                .config_dir()
+                .to_path_buf();
+            if !config_dir.exists() {
+                std::fs::create_dir_all(&config_dir).unwrap();
+            }
+            config_dir.join("config.toml")
+        } else {
+            panic!("Unsupported OS")
+        }
+    }
 }

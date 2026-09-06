@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mira Sharer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0d0f12; color: #e6e9ee;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+
+  /* full-window letterboxed stage */
+  #stage { position: fixed; inset: 0; display: none; background: #000; }
+  #stage.live { display: block; }
+  #video { width: 100%; height: 100%; object-fit: contain; }
+  #audio { display: none; }
+
+  /* centered overlay (status / errors / join form) */
+  #overlay { position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; text-align: center;
+    padding: 24px; background: #0d0f12; }
+  #overlay.hidden { display: none; }
+  h1 { font-size: 1.4rem; font-weight: 600; margin: 0; }
+  #status { font-size: 1.05rem; color: #9aa4b2; }
+  #error { font-size: 1rem; color: #ff7b72; min-height: 1.2em; white-space: pre-wrap; }
+  button { background: #2f81f7; color: #fff; border: 0; border-radius: 6px;
+    padding: 8px 22px; font-size: 0.95rem; cursor: pointer; }
+  button:hover { background: #4a90f8; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  label { display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+    font-size: 0.85rem; color: #9aa4b2; }
+  input { background: #161a20; color: #e6e9ee; border: 1px solid #2b313a;
+    border-radius: 6px; padding: 8px 10px; font-size: 0.95rem; width: 260px; }
+  #joinform { display: none; flex-direction: column; gap: 14px; align-items: center; }
+  #joinform.visible { display: flex; }
+  #audiohint { display: none; position: fixed; bottom: 16px; left: 50%;
+    transform: translateX(-50%); z-index: 10; }
+  #audiohint.visible { display: inline-block; }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="video" autoplay playsinline></video>
+  <audio id="audio" autoplay></audio>
+</div>
+
+<div id="overlay">
+  <div id="joinform">
+    <h1>Mira Sharer</h1>
+    <label>Room
+      <input id="roominput" autocomplete="off" spellcheck="false">
+    </label>
+    <label>Passcode
+      <input id="pwdinput" autocomplete="off">
+    </label>
+    <button id="joinbtn">Join</button>
+  </div>
+  <div id="status" hidden></div>
+  <div id="error" hidden></div>
+  <button id="reconnect" hidden>Reconnect</button>
+</div>
+
+<button id="audiohint">Click to enable audio</button>
+
+<script>
+"use strict";
+
+// ---- config from query params -------------------------------------------------
+const params = new URLSearchParams(location.search);
+let room = params.get("room");
+let pwd = params.get("pwd");
+const signaller = params.get("signaller") ||
+  (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/signaller";
+const from = crypto.randomUUID();
+
+// ---- dom ----------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const stage = $("stage"), video = $("video"), audio = $("audio");
+const overlay = $("overlay"), statusEl = $("status"), errorEl = $("error");
+const reconnectBtn = $("reconnect"), joinform = $("joinform"), audiohint = $("audiohint");
+
+// ---- state --------------------------------------------------------------------
+let ws = null;
+let pc = null;
+let keepaliveTimer = null;
+let remoteDescSet = false;
+let failed = false; // terminal state: no reconnect offered
+const iceQueue = []; // candidates that arrive before the remote description
+
+function setStatus(text) {
+  statusEl.hidden = !text;
+  statusEl.textContent = text || "";
+}
+function setError(text) {
+  errorEl.hidden = !text;
+  errorEl.textContent = text || "";
+}
+function showReconnect(show) { reconnectBtn.hidden = !show; }
+
+// ---- signalling ---------------------------------------------------------------
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function connect() {
+  failed = false;
+  setError("");
+  showReconnect(false);
+  setStatus("Connecting…");
+  ws = new WebSocket(signaller);
+
+  ws.onopen = () => {
+    setStatus("Waiting for approval…");
+    send({ type: "join", room, from, name: "WebUI", auth: { type: "password", password: pwd } });
+    keepaliveTimer = setInterval(() => send({ type: "keep_alive" }), 30000);
+  };
+
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    handle(msg);
+  };
+
+  ws.onclose = () => {
+    stopKeepalive();
+    if (!failed) {
+      failed = true;
+      setStatus("");
+      setError("Connection to the sharer was lost.");
+      showReconnect(true);
+    }
+  };
+  ws.onerror = () => {}; // onclose follows and handles it
+}
+
+function stopKeepalive() {
+  if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
+}
+
+function fail(text) {
+  failed = true;
+  stopKeepalive();
+  setStatus("");
+  setError(text);
+  showReconnect(false);
+  if (ws) ws.close();
+  if (pc) { pc.close(); pc = null; }
+}
+
+const declineText = (reason) => [
+  "Join was declined.",
+  "Incorrect passcode.",
+  "No credentials provided.",
+  "Declined by host.",
+][reason] ?? "Join was declined (reason " + reason + ").";
+
+function handle(msg) {
+  switch (msg.type) {
+    case "offer":
+      onOffer(msg);
+      break;
+    case "ice":
+      if (!pc || !remoteDescSet) {
+        iceQueue.push(msg.ice);
+      } else {
+        pc.addIceCandidate(msg.ice).catch(() => {});
+      }
+      break;
+    case "join_declined":
+      fail(declineText(msg.reason));
+      break;
+    case "room_closed":
+      fail("Session ended.");
+      break;
+    // start_response / ice_servers_response / keep_alive / leave: not relevant here
+  }
+}
+
+// ---- webrtc -------------------------------------------------------------------
+async function onOffer(msg) {
+  try {
+    remoteDescSet = false;
+    iceQueue.length = 0;
+    pc = new RTCPeerConnection();
+
+    // map the sharer's IceServer list to RTCIceServer; omit empty/Unspecified
+    // credential types (the browser rejects e.g. "Unspecified")
+    const iceServers = (msg.ice_servers || []).map((s) => {
+      const srv = { urls: s.urls };
+      if (s.username) srv.username = s.username;
+      if (s.credential) srv.credential = s.credential;
+      if (s.credential_type && s.credential_type !== "Unspecified") {
+        srv.credentialType = s.credential_type.toLowerCase();
+      }
+      return srv;
+    });
+    if (iceServers.length) pc.setConfiguration({ iceServers });
+
+    pc.ontrack = (ev) => {
+      const stream = ev.streams[0];
+      if (!stream) return;
+      if (ev.kind === "video") video.srcObject = stream;
+      else audio.srcObject = stream;
+      stage.classList.add("live");
+      overlay.classList.add("hidden");
+      video.play().catch(() => {});
+      audio.play().catch(() => audiohint.classList.add("visible"));
+    };
+
+    pc.onicecandidate = (ev) => {
+      if (ev.candidate) {
+        send({ type: "ice", ice: ev.candidate.toJSON(), from, to: room });
+      }
+    };
+
+    setStatus("Waiting for stream…");
+    await pc.setRemoteDescription(msg.sdp);
+    remoteDescSet = true;
+
+    // flush candidates that arrived before the remote description was set
+    for (const candidate of iceQueue.splice(0)) {
+      await pc.addIceCandidate(candidate).catch(() => {});
+    }
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    send({ type: "answer", sdp: pc.localDescription, from, to: room });
+  } catch (e) {
+    fail("WebRTC error: " + e.message);
+  }
+}
+
+// ---- join form / page lifecycle -------------------------------------------------
+if (!room || !pwd) {
+  // no room/pwd in the URL: show a small join form
+  joinform.classList.add("visible");
+  $("joinbtn").addEventListener("click", () => {
+    room = $("roominput").value.trim();
+    pwd = $("pwdinput").value.trim();
+    if (!room || !pwd) return;
+    joinform.classList.remove("visible");
+    connect();
+  });
+} else {
+  connect();
+}
+
+reconnectBtn.addEventListener("click", connect);
+audiohint.addEventListener("click", () => {
+  audio.play().then(() => audiohint.classList.remove("visible")).catch(() => {});
+});
+
+window.addEventListener("beforeunload", () => {
+  send({ type: "leave", from });
+  if (ws) ws.close();
+  if (pc) pc.close();
+});
+</script>
+</body>
+</html>

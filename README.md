@@ -100,6 +100,18 @@ as a starting point.
 
 For macOS, the configuration file is located at `~/Library/Application Support/Mira-Sharer/config.toml`.
 
+## Local WebUI
+
+By default, the sharer starts an embedded local web server (loopback only, no third-party server needed) that serves a built-in viewer page and acts as the signalling server for it. Media still flows P2P via WebRTC between the sharer and the browser — the local server only handles signalling.
+
+```toml
+[webui]
+enabled = true   # set to false to use the external (mirashare) signaller/viewer
+port = 8765
+```
+
+To use it: start sharing, then open the **Invite Link** shown on the sharing page (or just `http://127.0.0.1:8765/` and enter the room id and passcode), and accept the pending viewer in the app. Setting `webui.enabled = false` restores the original mirashare flow. If the port is already in use, the error is logged and the app continues with the configured `signaller_url`.
+
 ## License
 
 GPLv3

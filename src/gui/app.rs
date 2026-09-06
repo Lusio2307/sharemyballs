@@ -1,22 +1,19 @@
-use std::path::Path;
 use std::sync::Arc;
 
-use clap::Parser;
-use directories::ProjectDirs;
 use futures_util::SinkExt;
 use iced::widget::row;
 use iced::Alignment::Center;
 use iced::{executor, Application, Command, Length, Subscription};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use crate::capture::capturer;
-use crate::capture::capturer::Capturer;
+use crate::capture::capturer::{Args, Capturer};
+use crate::column_iced;
+use crate::config::Config;
 use crate::gui::component::sharing::SharingPage;
 use crate::gui::component::start::StartPage;
 use crate::gui::component::{sharing, start, Component};
 use crate::gui::theme::widget::Element;
 use crate::gui::theme::Theme;
-use crate::{column_iced, config};
 
 pub struct App {
     capturer: Capturer,
@@ -39,30 +36,9 @@ impl Application for App {
     type Message = Message;
 
     type Theme = Theme;
-    type Flags = ();
+    type Flags = (Args, Config);
 
-    fn new(_flags: ()) -> (Self, Command<Message>) {
-        let args = capturer::Args::parse();
-        let config_path = if let Some(config_path) = &args.config {
-            Path::new(config_path).to_path_buf()
-        } else {
-            if cfg!(target_os = "windows") {
-                Path::new("config.toml").to_path_buf()
-            } else if cfg!(target_os = "macos") {
-                let config_dir = ProjectDirs::from("", "", "Mira Sharer")
-                    .unwrap()
-                    .config_dir()
-                    .to_path_buf();
-                if !config_dir.exists() {
-                    std::fs::create_dir_all(&config_dir).unwrap();
-                }
-                config_dir.join("config.toml")
-            } else {
-                panic!("Unsupported OS")
-            }
-        };
-
-        let config = config::load(config_path.as_path()).unwrap();
+    fn new((args, config): Self::Flags) -> (Self, Command<Message>) {
         let (intermediate_update_sender, intermediate_update_receiver) = channel(10);
         let intermediate_update_sender = Box::leak(Box::new(intermediate_update_sender));
         let capturer = Capturer::new(

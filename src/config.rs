@@ -30,6 +30,17 @@ pub struct Config {
 
     #[serde(default = "libx264")]
     pub encoder: EncoderConfig,
+
+    #[serde(default = "default_webui")]
+    pub webui: WebuiConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WebuiConfig {
+    #[serde(default = "default_webui_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_webui_port")]
+    pub port: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -101,7 +112,8 @@ impl Config {
             ))
             .await
             .iter()
-            .flatten().cloned()
+            .flatten()
+            .cloned()
             .collect(),
             ..self.clone()
         }
@@ -170,6 +182,21 @@ fn default_viewer() -> String {
 
 fn default_max_fps() -> u32 {
     60
+}
+
+fn default_webui() -> WebuiConfig {
+    WebuiConfig {
+        enabled: default_webui_enabled(),
+        port: default_webui_port(),
+    }
+}
+
+fn default_webui_enabled() -> bool {
+    true
+}
+
+fn default_webui_port() -> u16 {
+    8765
 }
 
 fn default_ice_servers() -> Vec<IceServer> {

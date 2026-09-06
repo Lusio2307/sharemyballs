@@ -98,13 +98,33 @@ impl Capturer {
     }
 
     pub fn get_invite_link(&self) -> Option<String> {
-        Some(format!(
-            "{}?room={}&pwd={}&signaller={}",
-            self.config.viewer_url,
-            self.get_room_id().unwrap_or_default(),
-            self.room_password,
-            self.config.signaller_url
-        ))
+        if self.config.webui.enabled {
+            // the local page derives its WS URL from its own origin
+            Some(format!(
+                "http://127.0.0.1:{}/?room={}&pwd={}",
+                self.config.webui.port,
+                self.get_room_id().unwrap_or_default(),
+                self.room_password
+            ))
+        } else {
+            Some(format!(
+                "{}?room={}&pwd={}&signaller={}",
+                self.config.viewer_url,
+                self.get_room_id().unwrap_or_default(),
+                self.room_password,
+                self.config.signaller_url
+            ))
+        }
+    }
+
+    /// Signaller URL for this session: the embedded webui when enabled,
+    /// otherwise the configured (mirashare) signaller.
+    fn signaller_url(&self) -> String {
+        if self.config.webui.enabled {
+            format!("ws://127.0.0.1:{}/signaller", self.config.webui.port)
+        } else {
+            self.config.signaller_url.clone()
+        }
     }
 
     pub fn get_room_id(&self) -> Option<String> {
@@ -174,6 +194,7 @@ impl Capturer {
     }
 
     fn capture(&mut self, args: Args, config: Config, shutdown_token: CancellationToken) {
+        let signaller_url = self.signaller_url();
         let profiler = PerformanceProfiler::new(args.profiler, config.max_fps);
         let signaller_opt = self.signaller.clone();
         let notify_update = self.notify_update.clone();
@@ -186,7 +207,6 @@ impl Capturer {
         tokio::spawn(async move {
             {
                 let mut capture = capture.lock().await;
-                let signaller_url = config.signaller_url.clone();
                 let signaller = Arc::new(
                     WebSocketSignaller::new(&signaller_url, notify_update.clone())
                         .await
