@@ -337,8 +337,6 @@ unsafe fn create_yuv_frame(sample_buffer_ref: CMSampleBufferRef) -> Option<YUVFr
 
     YUVFrame {
         display_time: epoch as u64,
-        width: width as i32,
-        height: height as i32,
         luminance_bytes,
         luminance_stride: luminance_stride as i32,
         chrominance_bytes,

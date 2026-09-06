@@ -61,12 +61,12 @@ pub struct IceServer {
     pub credential_type: IceCredentialType,
 }
 
-impl Into<IceServer> for SignallerIceServer {
-    fn into(self) -> IceServer {
+impl From<SignallerIceServer> for IceServer {
+    fn from(val: SignallerIceServer) -> Self {
         IceServer {
-            urls: vec![self.url],
-            username: self.username,
-            credential: self.password,
+            urls: vec![val.url],
+            username: val.username,
+            credential: val.password,
             credential_type: IceCredentialType::Password,
         }
     }
@@ -101,8 +101,7 @@ impl Config {
             ))
             .await
             .iter()
-            .flatten()
-            .map(|s| s.clone().into())
+            .flatten().cloned()
             .collect(),
             ..self.clone()
         }

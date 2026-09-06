@@ -149,7 +149,7 @@ impl<'a> Component<'a> for SharingPage {
                     self.invite_tab.view(props.clone())
                 )
                 .push(self.viewers_tab.tab_label(), self.viewers_tab.view(props))
-                .tab_bar_style(Default::default())
+                .tab_bar_style(())
                 .icon_font(resource::font::ICON)
                 .text_font(resource::font::BARLOW)
                 .tab_bar_position(iced_aw::TabBarPosition::Top)

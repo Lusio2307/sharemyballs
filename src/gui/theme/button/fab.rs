@@ -37,7 +37,7 @@ impl FAB {
     pub fn build<'a, Message: 'a>(self) -> Button<'a, Message> {
         button(
             row![
-                icon(self.icon.clone()).size(24),
+                icon(self.icon).size(24),
                 horizontal_space(12),
                 bold(self.text.clone()).size(16)
             ]

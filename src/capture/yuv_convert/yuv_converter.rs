@@ -233,8 +233,6 @@ impl YuvConverter {
 
         Ok(YUVFrame {
             display_time: 0,
-            width: resolution.0 as i32,
-            height: resolution.1 as i32,
             luminance_bytes,
             luminance_stride: luminance_stride as i32,
             chrominance_bytes,
@@ -419,10 +417,6 @@ unsafe fn init_backend_resources(
     let mut texture = None;
     device.CreateTexture2D(&texture_desc, None, Some(&mut texture))?;
     let texture = texture.unwrap();
-
-    texture_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    texture_desc.Usage = D3D11_USAGE_STAGING;
-    texture_desc.BindFlags = D3D11_BIND_FLAG::default();
 
     let mut rtv = None;
     device.CreateRenderTargetView(&texture, None, Some(&mut rtv))?;

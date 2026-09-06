@@ -40,7 +40,7 @@ impl IconButton {
     }
 
     pub fn build<'a, Message: 'a>(self) -> Button<'a, Message> {
-        button(icon(self.icon.clone()).size(18))
+        button(icon(self.icon).size(18))
             .style(Box::new(self) as _)
             .padding(11)
             .width(40)

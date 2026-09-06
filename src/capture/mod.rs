@@ -13,7 +13,7 @@ pub trait ScreenCapture {
     async fn start_capture(
         &mut self,
         encoder: FfmpegEncoder,
-        output: Arc<Mutex<impl OutputSink + Send + ?Sized>>,
+        output: Arc<Mutex<impl OutputSink + ?Sized>>,
         profiler: PerformanceProfiler,
         shutdown_token: CancellationToken,
     ) -> Result<()>;
@@ -38,10 +38,14 @@ pub use wgc::WGCScreenCapture as ScreenCaptureImpl;
 
 pub mod capturer;
 mod frame;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
 pub use frame::YUVFrame;
+#[cfg(target_os = "linux")]
+pub use linux::LinuxCapture as ScreenCaptureImpl;
 #[cfg(target_os = "macos")]
 pub use macos::MacOSCapture as ScreenCaptureImpl;
 

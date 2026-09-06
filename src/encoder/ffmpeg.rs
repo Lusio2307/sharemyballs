@@ -31,8 +31,8 @@ pub enum FrameData<'a> {
 
 impl FfmpegEncoder {
     pub fn new(w: u32, h: u32, encoder_config: &EncoderConfig) -> Self {
-        let w = if w % 2 == 0 { w } else { w + 1 } as usize;
-        let h = if h % 2 == 0 { h } else { h + 1 } as usize;
+        let w = if w.is_multiple_of(2) { w } else { w + 1 } as usize;
+        let h = if h.is_multiple_of(2) { h } else { h + 1 } as usize;
         let time_base = TimeBase::new(1, 90_000);
 
         let pixel_format = video::frame::get_pixel_format(&encoder_config.pixel_format);

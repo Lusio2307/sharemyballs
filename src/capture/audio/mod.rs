@@ -101,7 +101,7 @@ impl AudioCapture {
 
         tokio::spawn(async move {
             loop {
-                let data = receiver.recv().map_or_else(|_| None, Some);
+                let data = receiver.recv().ok();
                 if data.is_none() {
                     info!("Audio capture stopped");
                     break;

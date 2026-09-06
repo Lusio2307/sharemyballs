@@ -116,7 +116,7 @@ impl Application for App {
         }
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         let is_sharing = self.capturer.is_running();
         let element: Element<Message> = row![column_iced![if is_sharing {
             let viewer_manager = self.capturer.get_viewer_manager();

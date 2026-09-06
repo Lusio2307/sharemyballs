@@ -40,7 +40,7 @@ impl FilledButton {
     }
 
     pub fn build<'a, Message: 'a>(self) -> Button<'a, Message> {
-        if let Some(_icon) = self.icon.clone() {
+        if let Some(_icon) = self.icon {
             button(
                 row![
                     icon(_icon).size(18),
