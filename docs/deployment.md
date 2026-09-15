@@ -114,15 +114,49 @@ comes back after a reboot. Note that screen capture requires an interactive
 session, so a logon task is the right shape on Windows rather than a true
 service.
 
-## LAN-only deployment
+## Watching from another device on the same network
 
-If every viewer is on the same network you need none of the above: no domain, no
-Caddy, no coturn. Set `bind = "0.0.0.0"`, open port 8765, and browse to
-`http://<sharer-ip>:8765/?room=<room>&pwd=<password>`.
+No domain, no Caddy and no coturn are needed. Three things are:
 
-Browsers only expose WebRTC on secure origins, but `http://localhost` and
-plain-HTTP LAN origins are treated as secure enough in practice for this to
-work; `wss://` via Caddy is the robust path if you hit trouble.
+**1. Listen on the LAN.** In `config.toml`:
+
+```toml
+[webui]
+bind = "0.0.0.0"
+# So the Invite tab shows a link other devices can actually open:
+public_url = "http://192.168.1.20:8765/"
+```
+
+Find the address with `ipconfig`. Without `public_url` the invite link keeps
+pointing at `127.0.0.1`, which only resolves on the sharer itself.
+
+**2. Allow it through Windows Firewall.** Both the page (inbound TCP 8765) and
+the WebRTC media (inbound UDP on ephemeral ports) must get in, so allow the
+program rather than a single port. From an elevated PowerShell:
+
+```powershell
+New-NetFirewallRule -DisplayName "Mira Sharer" -Direction Inbound `
+  -Program "D:\home\Luciano\repository\sharemyballs\target\release\mira_sharer.exe" `
+  -Action Allow -Profile Private
+```
+
+**3. Open `http://<sharer-ip>:8765/?room=<room>&pwd=<password>`** on the other
+device.
+
+Notes:
+
+- **Plain HTTP is fine here.** `RTCPeerConnection` and `WebSocket` are not
+  restricted to secure contexts -- only capture APIs are. The viewer page
+  deliberately avoids secure-context-only APIs: `crypto.randomUUID` is
+  reimplemented on top of `crypto.getRandomValues`, which carries no such
+  restriction. Serving over `wss://` via Caddy is still the right answer for
+  viewers outside the LAN, but it is not required on it.
+- Audio playback needs one tap on the page, per the browser autoplay policy.
+- If the sharer has extra network adapters (VPN, WSL's vEthernet), it may
+  advertise host candidates the viewer cannot reach. ICE tries them all, so an
+  unreachable one only costs a little connection time.
+- Anyone on the network who knows the room id and password can watch. With
+  `auto_accept = true` the password is the only gate, so make it a strong one.
 
 ## Verifying
 

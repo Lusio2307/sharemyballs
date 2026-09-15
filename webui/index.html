@@ -73,7 +73,32 @@ let room = params.get("room");
 let pwd = params.get("pwd");
 const signaller = params.get("signaller") ||
   (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/signaller";
-const from = crypto.randomUUID();
+
+// A v4 UUID, without crypto.randomUUID().
+//
+// randomUUID() is a secure-context-only API. Reaching this page from another
+// device on the LAN means a plain-HTTP origin (http://192.168.1.20:8765/), where
+// the method is undefined and the page would throw before connecting anything.
+// getRandomValues() carries no such restriction, so prefer it and keep a
+// Math.random fallback for completeness.
+function makeId() {
+  if (self.crypto && typeof self.crypto.randomUUID === "function") {
+    return self.crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (self.crypto && self.crypto.getRandomValues) {
+    self.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) +
+    "-" + hex.slice(16, 20) + "-" + hex.slice(20);
+}
+
+const from = makeId();
 
 // ---- dom ----------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
