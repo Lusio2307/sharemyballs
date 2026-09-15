@@ -82,6 +82,29 @@ Copy `config.toml.example` to `config.toml` and edit it, then:
 .\target\release\mira_sharer.exe --config config.toml
 ```
 
+The FFmpeg DLLs are placed next to the executable, so the app starts from any
+working directory. `config.toml` is **not** — on Windows the default config path
+is `config.toml` relative to the current directory, and if it is missing the app
+tries to create one there. So either run from the repository root, or pass an
+absolute path:
+
+```powershell
+.\target\release\mira_sharer.exe --config D:\path\to\config.toml
+```
+
+Other useful flags:
+
+| Flag | Effect |
+| --- | --- |
+| `-d`, `--display <N>` | capture display N instead of the default 0 |
+| `--disable-control` | ignore remote mouse/keyboard input entirely |
+| `--file <path>` | write to a file instead of streaming (no signaller) |
+| `--profiler` | log frame timings |
+
+This is a GUI application and screen capture needs an **interactive desktop
+session**, so it cannot run as a Windows service in session 0. Launch it after
+logon (a logon task works well) rather than from WSL.
+
 With `[webui] enabled` (the default) the app logs the viewer page URL and the
 invite link appears in the GUI's Invite tab. See
 [deployment.md](deployment.md) for TLS, coturn and unattended operation.
