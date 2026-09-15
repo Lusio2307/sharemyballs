@@ -28,6 +28,19 @@ This populates `third_party/ffmpeg/{include,lib,bin}` and fails loudly if the
 archive turns out not to contain real headers and import libraries — a directory
 named `include` full of DLLs is a failure mode this project has hit before.
 
+It also mirrors the import libraries into `third_party/ffmpeg/lib/x64`. The BtbN
+package puts them directly in `lib\`, but environments set up for this project
+commonly persist `FFMPEG_LIB_DIR=<repo>\third_party\ffmpeg\lib\x64`, which would
+otherwise dangle and make a plain `cargo build` fail. With the mirror, both
+layouts resolve:
+
+```powershell
+# works, because the mirror exists
+$env:FFMPEG_LIB_DIR = "$repo\third_party\ffmpeg\lib\x64"
+# so does this
+$env:FFMPEG_LIB_DIR = "$repo\third_party\ffmpeg\lib"
+```
+
 ## 2. Build
 
 ```powershell

@@ -59,5 +59,22 @@ if (-not (Test-Path $Lib)) {
     throw "third_party/ffmpeg/lib has no avcodec.lib import library."
 }
 
+# Mirror the import libraries into lib\x64 as well.
+#
+# The BtbN package puts them directly in lib\, but environments set up for this
+# project commonly persist
+#     FFMPEG_LIB_DIR=<repo>\third_party\ffmpeg\lib\x64
+# which then dangles, and a plain `cargo build` fails to find the import
+# libraries. Keeping the mirror means that variable resolves as-is. The whole
+# set is well under a megabyte.
+$x64 = Join-Path $Dest 'lib\x64'
+New-Item -ItemType Directory -Force -Path $x64 | Out-Null
+Copy-Item (Join-Path $Dest 'lib\*.lib') $x64 -Force
+Copy-Item (Join-Path $Dest 'lib\*.def') $x64 -Force
+
+if (-not (Test-Path (Join-Path $x64 'avcodec.lib'))) {
+    throw "Failed to mirror the import libraries into third_party/ffmpeg/lib/x64."
+}
+
 Write-Host "OK: $Dest"
-Write-Host "Runtime DLLs are in third_party\ffmpeg\bin -- copy them next to mira_sharer.exe."
+Write-Host "Runtime DLLs are in third_party\ffmpeg\bin -- scripts/build-windows.ps1 copies them for you."
