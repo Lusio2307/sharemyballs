@@ -99,5 +99,25 @@ features = [
     "Win32_Devices_Display",
 ]
 
+[dev-dependencies]
+# Present only so tests/dtls_curve_selection.rs can exercise the curve-selection
+# fix in the vendored crate (resolved to vendor/webrtc-dtls by the [patch] below).
+# Already in the dependency graph via `webrtc`, so this adds no build cost.
+webrtc-dtls = "0.7.2"
+
 [build-dependencies]
 embed-resource = "2.1.1"
+
+# webrtc 0.7.3 pulls webrtc-dtls 0.7.2, which picks the client's *first*
+# advertised elliptic curve without checking that it is supported. Chrome/Edge
+# now advertise post-quantum groups (X25519MLKEM768) first, so the DTLS
+# handshake aborts with `invalid named curve` and no media flows.
+#
+# Upstream only fixed this in webrtc-dtls 0.12.0, which belongs to the
+# sans-I/O webrtc 0.20+/0.21 rewrite -- adopting it would mean migrating the
+# whole peer-connection/track API. Vendoring 0.7.2 with the one-line curve
+# selection fix keeps us on webrtc 0.7.3.
+#
+# Keep the vendored crate at version 0.7.2 so it satisfies webrtc's `^0.7.2`.
+[patch.crates-io]
+webrtc-dtls = { path = "vendor/webrtc-dtls" }
