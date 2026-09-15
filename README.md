@@ -85,10 +85,8 @@ A. The signalling server we host does collect some metrics such as the number/le
 ## Build
 
 `ac-ffmpeg` supports **FFmpeg v4-v7 only**, so an FFmpeg 8/9 install will not
-compile. On Windows, `scripts/fetch-ffmpeg.ps1` fetches a pinned FFmpeg 7.1.1
-shared build into `third_party/ffmpeg`; see [docs/build-windows.md](docs/build-windows.md)
-for the full recipe, including the developer-environment step that `rc.exe`
-requires.
+compile. On Windows two scripts handle everything; see
+[docs/build-windows.md](docs/build-windows.md) for the detail.
 
 * For macOS, you could use `brew install ffmpeg@5` (later versions will not compile).
   * You will also need to `cargo install apple-bindgen` and run `apple-bindgen CoreFoundation --sdk macosx`
@@ -96,11 +94,12 @@ requires.
   `libavcodec-dev` and friends are enough.
 * For Windows:
   ```powershell
-  pwsh -File scripts/fetch-ffmpeg.ps1
-  Copy-Item third_party\ffmpeg\bin\*.dll .
+  pwsh -File scripts/fetch-ffmpeg.ps1    # once: pinned FFmpeg 7.1.1 into third_party/ffmpeg
+  pwsh -File scripts/build-windows.ps1   # imports vcvars, sets FFMPEG_*, builds, copies DLLs
   ```
 
-Then, simply run `cargo run --release`.
+Then, simply run `cargo run --release` (or the built
+`target\release\mira_sharer.exe --config config.toml` on Windows).
 
 ## Configure
 Configuration file is by default `config.toml`; copy

@@ -1,70 +1,81 @@
 # Building on Windows
 
+Two scripts do the whole job:
+
+```powershell
+pwsh -File scripts/fetch-ffmpeg.ps1     # once
+pwsh -File scripts/build-windows.ps1    # each build
+```
+
 The app links FFmpeg, and `ac-ffmpeg` supports **FFmpeg v4-v7 only**. Do not
 point it at the FFmpeg 8/9 builds that winget or the BtbN "latest" release now
-ship -- it will not compile. `scripts/fetch-ffmpeg.ps1` pins a known-good
-FFmpeg 7.1.1 shared build.
+ship — it will not compile. `fetch-ffmpeg.ps1` pins a known-good FFmpeg 7.1.1
+shared build.
 
 ## Prerequisites
 
 - Rust with the `x86_64-pc-windows-msvc` target (`rustup target list --installed`).
 - Visual Studio Build Tools with the C++ workload, plus a Windows SDK.
-  `embed-resource` in `build.rs` shells out to `rc.exe`, so the build must run
-  from a developer environment (see below), not a plain shell.
-- FFmpeg 7.1.x shared build in `third_party/ffmpeg`.
+- `pwsh` (PowerShell 7) or `powershell.exe` (5.1) — both work.
 
 ## 1. Fetch FFmpeg
-
-From the repository root:
 
 ```powershell
 pwsh -File scripts/fetch-ffmpeg.ps1
 ```
 
-This produces `third_party/ffmpeg/{include,lib,bin}`. The script fails loudly if
-the archive turns out not to contain real headers and import libraries, because
-a directory named `include` full of DLLs is a failure mode this setup has hit
-before.
-
-`.cargo/config.toml` points `FFMPEG_INCLUDE_DIR` and `FFMPEG_LIB_DIR` at those
-directories with `force = true`, so stale machine-wide `FFMPEG_*` variables
-(including one pointing at a `lib/x64` that does not exist) cannot take
-precedence.
+This populates `third_party/ffmpeg/{include,lib,bin}` and fails loudly if the
+archive turns out not to contain real headers and import libraries — a directory
+named `include` full of DLLs is a failure mode this project has hit before.
 
 ## 2. Build
 
-Run inside a developer environment so `rc.exe` and `link.exe` are on `PATH`:
-
 ```powershell
-cmd /c '"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && cargo build --release'
+pwsh -File scripts/build-windows.ps1
 ```
 
-Adjust the `vcvars64.bat` path for your installation. A plain PowerShell session
-usually is *not* enough: the Rust MSVC target can find the linker itself, but
-`embed-resource` needs `rc.exe` on `PATH`.
+The script, in order:
 
-## 3. Copy the runtime DLLs
+1. Verifies `third_party/ffmpeg` really has headers and import libraries.
+2. Locates and imports the MSVC developer environment via `vswhere` +
+   `vcvars64.bat`, so `rc.exe` (used by `build.rs` through `embed-resource`) and
+   `link.exe` are on `PATH`.
+3. Sets `FFMPEG_INCLUDE_DIR` and `FFMPEG_LIB_DIR` to absolute paths inside the
+   repo, **after** importing vcvars.
+4. Runs `cargo build --release`.
+5. Copies `third_party/ffmpeg/bin/*.dll` next to the executable.
+
+### Why not just `cargo build`?
+
+Two things break a bare `cargo build`:
+
+- Cargo's `[env]` section cannot be scoped to a target, and a plain value under
+  `[target.<triple>.env]` is **not** forced, so it loses to an already-set
+  environment variable. A stale machine-wide `FFMPEG_LIB_DIR` — for example one
+  pointing at a `lib/x64` that does not exist — would be used instead, and the
+  build would fail to find the import libraries. The extended
+  `{ value = ..., relative = true, force = true }` form is rejected outright
+  there.
+- The MSVC environment is not imported in a plain shell, so `rc.exe` is missing.
+
+Step 3 happens after step 2 deliberately: the imported vcvars environment still
+carries the machine-wide `FFMPEG_*` values and would otherwise overwrite them.
+
+## 3. Run
+
+Copy `config.toml.example` to `config.toml` and edit it, then:
 
 ```powershell
-Copy-Item third_party\ffmpeg\bin\*.dll .
+.\target\release\mira_sharer.exe --config config.toml
 ```
 
-The FFmpeg DLLs are loaded at runtime from the executable's directory, and
-`third_party/` is git-ignored, so they are not shipped with the repository.
+With `[webui] enabled` (the default) the app logs the viewer page URL and the
+invite link appears in the GUI's Invite tab. See
+[deployment.md](deployment.md) for TLS, coturn and unattended operation.
 
-Then run:
+## Verifying the build really linked FFmpeg
 
-```powershell
-.\mira_sharer.exe --config config.toml
-```
-
-Copy `config.toml.example` to `config.toml` first and edit it. With
-`[webui] enabled` (the default) the app prints the viewer page URL and the
-invite link appears in the GUI's Invite tab.
-
-## Verifying the build actually links FFmpeg
-
-`cargo check` does not link, so it will pass even if the import libraries are
-wrong. A successful `cargo build --release` plus a launch that logs
+`cargo check` does not link, so it passes even when the import libraries are
+wrong. A successful `cargo build --release` plus a launch that gets as far as
 `WebRTC initialized` (rather than failing at encoder creation) is the real
 signal.

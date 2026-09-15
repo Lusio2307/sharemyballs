@@ -1,20 +1,27 @@
-# FFmpeg discovery is split by target because the two platforms need entirely
-# different artifacts.
-
-# Windows: link the repo-local shared build under third_party/ffmpeg, populated
-# by scripts/fetch-ffmpeg.ps1. ac-ffmpeg supports FFmpeg v4-v7 only -- do not
-# point this at an FFmpeg 8/9 install.
+# FFmpeg discovery differs per platform, and cargo's `[env]` section cannot
+# usefully express that here:
 #
-# `force = true` is required, not cosmetic: a stale machine-wide
-# FFMPEG_INCLUDE_DIR / FFMPEG_LIB_DIR (e.g. one pointing at a `lib/x64` that
-# does not exist) otherwise takes precedence and the build fails to find the
-# headers or the import libraries.
-[target.x86_64-pc-windows-msvc.env]
-FFMPEG_INCLUDE_DIR = { value = "third_party/ffmpeg/include", relative = true, force = true }
-FFMPEG_LIB_DIR = { value = "third_party/ffmpeg/lib", relative = true, force = true }
-
-# Linux/macOS: ac-ffmpeg-build probes pkg-config for libavcodec, so the system
-# FFmpeg is used as-is. Deliberately no PKG_CONFIG_PATH override here: the
-# shared build in third_party/ffmpeg is a *Windows* package, and putting its
-# .pc files on the search path would hand a Linux build Windows include and
-# library directories.
+#   * The extended `{ value = "...", relative = true, force = true }` form is
+#     rejected under `[target.<triple>.env]` ("expected a string, but found a
+#     table").
+#   * A plain string under `[target.<triple>.env]` is not `force`d, so it loses
+#     to an already-set environment variable. That matters because a stale
+#     machine-wide `FFMPEG_INCLUDE_DIR` / `FFMPEG_LIB_DIR` (for example one
+#     pointing at a `lib/x64` that does not exist) would otherwise be picked up
+#     and the build would fail to find the headers or import libraries.
+#
+# So the Windows paths are set by the build script rather than from here:
+#
+#   Windows  ->  scripts/build-windows.ps1
+#                sets FFMPEG_INCLUDE_DIR / FFMPEG_LIB_DIR to absolute paths
+#                inside this repo for the build process only, then imports the
+#                MSVC developer environment and runs cargo.
+#                ac-ffmpeg supports FFmpeg v4-v7 only -- third_party/ffmpeg is
+#                populated by scripts/fetch-ffmpeg.ps1.
+#
+#   Linux / macOS  ->  nothing to configure. ac-ffmpeg-build probes pkg-config
+#                for libavcodec, so the system FFmpeg is used as-is.
+#                Deliberately no PKG_CONFIG_PATH entry pointing at
+#                third_party/ffmpeg: that directory holds a *Windows* package,
+#                and putting its .pc files on the search path would hand a
+#                Linux build Windows include and library directories.
