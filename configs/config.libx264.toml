@@ -1,15 +1,10 @@
-signaller_url = "wss://ws.mirashare.app"
-viewer_url = "https://mirashare.app/"
+# Software x264 for macOS/Linux (yuv420p input, as those capture backends
+# produce). On Windows use config.libx264.win.toml instead.
+#
+# Session, [webui] and [[ice_servers]] settings live in config.toml; copy the
+# [encoder] block below into it. See ../config.toml.example for the rest.
+
 max_fps = 60
-
-[[ice_servers]]
-urls = ["stun:stun.l.google.com:19302"]
-
-[[ice_servers]]
-urls = ["turn:openrelay.metered.ca:80"]
-username = "openrelayproject"
-credential = "openrelayproject"
-credential_type = "Password"
 
 [encoder]
 encoder = "libx264"

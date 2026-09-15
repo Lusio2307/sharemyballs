@@ -19,8 +19,9 @@ pub struct SignallerIceServer {
 
 #[async_trait]
 pub trait Signaller: Send + 'static {
-    /// indicating the start of a session, and starts to accept viewers
-    async fn start(&self);
+    /// Begin a session. `room` requests a specific room id when the signaller
+    /// supports fixed rooms; `None` asks it to assign one.
+    async fn start(&self, room: Option<String>);
     /// get a new peer request
     async fn accept_peer_request(&self) -> Option<(String, String, AuthenticationPayload)>;
     /// make a new peer
@@ -96,7 +97,15 @@ pub enum SignallerMessage {
         name: String, // viewer name
         auth: AuthenticationPayload,
     },
-    Start {},
+    Start {
+        /// Requested room id. Absent or `null` means "assign one".
+        ///
+        /// `#[serde(default)]` keeps this backward compatible with signallers
+        /// (and sharers) that predate fixed rooms: `{"type":"start"}` still
+        /// deserializes, with `room == None`.
+        #[serde(default)]
+        room: Option<String>,
+    },
     StartResponse {
         room: String,
     },

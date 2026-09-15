@@ -54,10 +54,11 @@ async fn main() {
 
     if config.webui.enabled {
         let port = config.webui.port;
+        let bind = config.webui.bind.clone();
         tokio::spawn(async move {
-            if let Err(e) = webui::start(port).await {
+            if let Err(e) = webui::start(&bind, port).await {
                 error!(
-                    "Failed to start webui on port {port}: {e} (falling back to configured signaller)"
+                    "Failed to start webui on {bind}:{port}: {e} (falling back to configured signaller)"
                 );
             }
         });

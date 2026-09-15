@@ -1,0 +1,22 @@
+# coturn for the sharer's WebRTC traffic.
+#
+# Caddy is not in here on purpose: it has to reach 127.0.0.1:8765 on the machine
+# running the sharer, so it is simplest to run it natively on that machine (see
+# deploy/Caddyfile). coturn, by contrast, usually lives on a box with a stable
+# public address.
+#
+#     docker compose -f deploy/docker-compose.yml up -d
+#
+# Open in the firewall: 3478/udp, 3478/tcp, and the relay range
+# 49152-65535/udp configured in coturn/turnserver.conf.
+
+services:
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    # The relay range is wide and must be reachable directly, which is far
+    # simpler with host networking than with a published port range.
+    network_mode: host
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]

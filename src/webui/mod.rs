@@ -27,11 +27,11 @@ const REAP_INTERVAL: Duration = Duration::from_secs(10);
 
 static NEXT_CONN_ID: AtomicUsize = AtomicUsize::new(0);
 
-/// Start the embedded webui + signalling server on `127.0.0.1:<port>`.
+/// Start the embedded webui + signalling server on `bind`:`port`.
 /// Runs until the process exits.
-pub async fn start(port: u16) -> std::io::Result<()> {
-    let listener = TcpListener::bind(("127.0.0.1", port)).await?;
-    info!("WebUI listening on http://127.0.0.1:{port}");
+pub async fn start(bind: &str, port: u16) -> std::io::Result<()> {
+    let listener = TcpListener::bind((bind, port)).await?;
+    info!("WebUI listening on http://{bind}:{port}");
     serve(listener).await
 }
 
@@ -194,7 +194,20 @@ fn route(
         // sharer: begin a session
         "start" => {
             let Some(tx) = tx.take() else { return None };
-            let room = Uuid::new_v4().to_string();
+            // Honour a requested room so a bookmarked invite URL keeps working
+            // across restarts. `None` (the historical behaviour) still gets a
+            // random room.
+            let requested = envelope.room.filter(|room| !room.trim().is_empty());
+            let room = match requested {
+                Some(room) if !state.rooms.lock().unwrap().contains_key(&room) => room,
+                Some(room) => {
+                    warn!(
+                        "webui signaller: requested room {room} is already in use; assigning a random room"
+                    );
+                    Uuid::new_v4().to_string()
+                }
+                None => Uuid::new_v4().to_string(),
+            };
             state.rooms.lock().unwrap().insert(
                 room.clone(),
                 Room {
@@ -477,6 +490,71 @@ mod tests {
         // index page is served
         let body = reqwest_free_get(port).await;
         assert!(body.contains("Mira Sharer"));
+
+        server.abort();
+    }
+
+    /// A requested room is used verbatim, which is what lets a bookmarked
+    /// invite URL keep working across sharer restarts.
+    #[tokio::test]
+    async fn start_honours_requested_room() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(serve(listener));
+
+        let url = format!("ws://127.0.0.1:{port}/signaller");
+        let (mut sharer, _) = connect_async(&url).await.unwrap();
+
+        send_json(&mut sharer, json!({"type": "start", "room": "desk"})).await;
+        let resp = recv_json(&mut sharer).await;
+        assert_eq!(resp["type"], "start_response");
+        assert_eq!(resp["room"], "desk");
+
+        server.abort();
+    }
+
+    /// Two sharers asking for the same room must not collide. The second gets a
+    /// generated room rather than hijacking the first one's viewers.
+    #[tokio::test]
+    async fn start_falls_back_when_requested_room_is_taken() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(serve(listener));
+
+        let url = format!("ws://127.0.0.1:{port}/signaller");
+        let (mut first, _) = connect_async(&url).await.unwrap();
+        send_json(&mut first, json!({"type": "start", "room": "desk"})).await;
+        assert_eq!(recv_json(&mut first).await["room"], "desk");
+
+        let (mut second, _) = connect_async(&url).await.unwrap();
+        send_json(&mut second, json!({"type": "start", "room": "desk"})).await;
+        let resp = recv_json(&mut second).await;
+        assert_eq!(resp["type"], "start_response");
+        assert_ne!(
+            resp["room"], "desk",
+            "second sharer must not be handed a room that is already live"
+        );
+        assert!(!resp["room"].as_str().unwrap_or_default().is_empty());
+
+        server.abort();
+    }
+
+    /// A blank requested room counts as "assign one", so a stray `room = ""` in
+    /// config.toml cannot create an unusable session.
+    #[tokio::test]
+    async fn blank_requested_room_is_assigned_one() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(serve(listener));
+
+        let url = format!("ws://127.0.0.1:{port}/signaller");
+        let (mut sharer, _) = connect_async(&url).await.unwrap();
+
+        send_json(&mut sharer, json!({"type": "start", "room": "   "})).await;
+        let resp = recv_json(&mut sharer).await;
+        assert_eq!(resp["type"], "start_response");
+        assert!(!resp["room"].as_str().unwrap_or_default().is_empty());
+        assert_ne!(resp["room"], "   ");
 
         server.abort();
     }

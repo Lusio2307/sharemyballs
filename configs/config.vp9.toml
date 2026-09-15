@@ -1,15 +1,14 @@
-signaller_url = "wss://ws.mirashare.app"
-viewer_url = "https://mirashare.app/"
+# VP9 via libvpx -- lower bandwidth than H.264 for screen content, at higher
+# CPU cost and with weaker hardware-decode support in browsers.
+#
+# Session, [webui] and [[ice_servers]] settings live in config.toml; copy the
+# [encoder] block below into it. See ../config.toml.example for the rest.
+#
+# NOTE: this preset used to list `max-intra-rate` twice, which makes the file
+# invalid TOML (the toml crate rejects duplicate keys) and prevented it from
+# loading at all.
+
 max_fps = 30
-
-[[ice_servers]]
-urls = ["stun:stun.l.google.com:19302"]
-
-[[ice_servers]]
-urls = ["turn:openrelay.metered.ca:80"]
-username = "openrelayproject"
-credential = "openrelayproject"
-credential_type = "Password"
 
 [encoder]
 encoder = "libvpx-vp9"
@@ -20,13 +19,12 @@ encoding = "video/VP9"
 [encoder.options]
 deadline = "realtime"
 tune-content = "screen"
-max-intra-rate = "0"
+max-intra-rate = "300"
 tile-columns = "4"
 speed = "6"
 frame-parallel = "1"
 threads = "8"
 static-thresh = "0"
-max-intra-rate = "300"
 quality = "realtime"
 lag-in-frames = "0"
 qmin = "4"

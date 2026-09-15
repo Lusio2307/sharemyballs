@@ -1,0 +1,17 @@
+# Normalize text files to LF in the repository *and* on checkout.
+#
+# Without this, a Windows checkout (core.autocrlf=true is the Git for Windows
+# default) rewrites every tracked file to CRLF, so the whole repo shows up as
+# modified (17k+ lines added/removed) the moment any tool rewrites a file back
+# to LF. The committed blobs are LF already, so this changes nothing in the
+# index -- it only pins the checkout behaviour.
+* text=auto eol=lf
+
+# Keep binaries byte-exact.
+*.dll   binary
+*.exe   binary
+*.lib   binary
+*.ico   binary
+*.icns  binary
+*.png   binary
+*.zip   binary

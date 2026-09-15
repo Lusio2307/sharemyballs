@@ -83,22 +83,44 @@ Q. Do you collect any data from me?
 A. The signalling server we host does collect some metrics such as the number/length of sessions and the number of unique users estimated through your hashed IP address (salted and hashed with argon2). However, we do not collect any personal data. We do not have access to the data transmitted between the sharer and the viewer(s).
 
 ## Build
-You need to have ffmpeg installed.
+
+`ac-ffmpeg` supports **FFmpeg v4-v7 only**, so an FFmpeg 8/9 install will not
+compile. On Windows, `scripts/fetch-ffmpeg.ps1` fetches a pinned FFmpeg 7.1.1
+shared build into `third_party/ffmpeg`; see [docs/build-windows.md](docs/build-windows.md)
+for the full recipe, including the developer-environment step that `rc.exe`
+requires.
 
 * For macOS, you could use `brew install ffmpeg@5` (later versions will not compile).
   * You will also need to `cargo install apple-bindgen` and run `apple-bindgen CoreFoundation --sdk macosx`
-* For Windows, you need to download ffmpeg from [here](https://github.com/BtbN/FFmpeg-Builds/releases).
-Make sure you download a shared library build such as `ffmpeg-master-latest-win64-gpl-shared.zip`.
-Put it under `.\third_party\ffmpeg` so you have e.g. `.\third_party\ffmpeg\bin\ffmpeg.exe`.
-Then copy over all dlls under `ffmpeg\bin` to `.` (working directory).
+* For Linux, FFmpeg is discovered through pkg-config, so the distro's
+  `libavcodec-dev` and friends are enough.
+* For Windows:
+  ```powershell
+  pwsh -File scripts/fetch-ffmpeg.ps1
+  Copy-Item third_party\ffmpeg\bin\*.dll .
+  ```
 
 Then, simply run `cargo run --release`.
 
 ## Configure
-Configuration file is by default `config.toml`. There are preset configs in `configs/` directory that you could use
-as a starting point.
+Configuration file is by default `config.toml`; copy
+[config.toml.example](config.toml.example) to start, and see the preset configs
+in `configs/` for encoder-specific settings. Every key is optional, and the
+defaults contact no third-party service.
 
 For macOS, the configuration file is located at `~/Library/Application Support/Mira-Sharer/config.toml`.
+
+Key settings for unattended operation:
+
+```toml
+room = "desk"          # fixed room => stable invite URL
+password = "…"         # fixed password (default: random per session)
+auto_accept = true     # admit viewers without a GUI click (password still checked)
+auto_start = true      # begin sharing on launch
+```
+
+Deployment (TLS via Caddy, coturn for off-LAN viewers, firewall ports) is
+covered in [docs/deployment.md](docs/deployment.md).
 
 ## Local WebUI
 
@@ -108,9 +130,11 @@ By default, the sharer starts an embedded local web server (loopback only, no th
 [webui]
 enabled = true   # set to false to use the external (mirashare) signaller/viewer
 port = 8765
+bind = "127.0.0.1"   # use "0.0.0.0" to expose the page to the LAN
+# public_url = "https://stream.example.com/"   # base URL for the invite link
 ```
 
-To use it: start sharing, then open the **Invite Link** shown on the sharing page (or just `http://127.0.0.1:8765/` and enter the room id and passcode), and accept the pending viewer in the app. Setting `webui.enabled = false` restores the original mirashare flow. If the port is already in use, the error is logged and the app continues with the configured `signaller_url`.
+To use it: start sharing, then open the **Invite Link** shown on the sharing page (or just `http://127.0.0.1:8765/` and enter the room id and passcode), and accept the pending viewer in the app — or set `auto_accept = true` to skip that step. Setting `webui.enabled = false` restores the original mirashare flow. If the port is already in use, the error is logged and the app continues with the configured `signaller_url`.
 
 ## License
 

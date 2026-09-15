@@ -94,16 +94,21 @@ pub struct ViewerManager {
     auth_result_senders: Mutex<HashMap<String, Sender<bool>>>,
     notify_update: Arc<dyn Fn() + Send + Sync>,
     webrtc_output: Mutex<Option<Arc<Mutex<WebRTCOutput>>>>,
+    /// Admit viewers without waiting for a GUI decision. Needed for unattended
+    /// operation. The password check still runs first -- this removes the human
+    /// click, it does not bypass authentication.
+    auto_accept: bool,
 }
 
 impl ViewerManager {
-    pub fn new(notify_update: Arc<dyn Fn() + Send + Sync>) -> ViewerManager {
+    pub fn new(notify_update: Arc<dyn Fn() + Send + Sync>, auto_accept: bool) -> ViewerManager {
         ViewerManager {
             viewing_viewers: Mutex::new(Vec::new()),
             pending_viewers: Mutex::new(Vec::new()),
             auth_result_senders: Mutex::new(HashMap::new()),
             notify_update,
             webrtc_output: Mutex::new(None),
+            auto_accept,
         }
     }
     pub async fn get_viewing_viewers(&self) -> Vec<ViewerIdentifier> {
@@ -173,6 +178,17 @@ impl Authenticator for ViewerManager {
             uuid: uuid.clone(),
             name,
         }; // todo: get name
+
+        // Unattended mode: admit straight away. `ComplexAuthenticator` runs the
+        // password check before this, so reaching here already means the viewer
+        // presented valid credentials.
+        if self.auto_accept {
+            info!("{} auto-accepted (auto_accept is enabled)", uuid);
+            self.viewing_viewers.lock().await.push(viewer);
+            (self.notify_update)();
+            return None;
+        }
+
         self.pending_viewers.lock().await.push(viewer.clone());
         let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
         self.auth_result_senders

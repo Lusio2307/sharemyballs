@@ -206,10 +206,10 @@ macro_rules! blocking_recv {
 
 #[async_trait]
 impl Signaller for WebSocketSignaller {
-    async fn start(&self) {
-        trace!("Starting session");
+    async fn start(&self, room: Option<String>) {
+        trace!("Starting session (requested room: {room:?})");
         self.send_queue
-            .send(SignallerMessage::Start {})
+            .send(SignallerMessage::Start { room })
             .await
             .unwrap();
         // waiting for room id

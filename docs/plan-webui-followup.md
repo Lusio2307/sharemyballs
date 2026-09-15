@@ -1,6 +1,8 @@
 # Plan: WebUI — DTLS follow-up
 
-Status: **deferred** (packed for later). Companion to `plan-local-webui.md`.
+Status: **fix implemented; browser verification outstanding.** Companion to
+`plan-local-webui.md`. See `vendor/README.md` for the change and
+`tests/dtls_curve_selection.rs` for the regression tests.
 
 ## TL;DR
 
@@ -60,20 +62,30 @@ with the same browser.
 
 ## Follow-up (fix the DTLS bug so Chrome/Edge work everywhere)
 
-- [ ] **A. Confirm the cause cheaply (optional):** on Windows/native Linux, retest the
-      viewer in **Firefox** (lists x25519/P-256 first) vs Chrome/Edge. If Firefox goes
-      `Live` and Chrome/Edge fail with `invalid named curve`, the curve-ordering bug is
-      confirmed.
-- [ ] **B. Fix the DTLS bug properly:**
-  - [ ] B1. Check whether a newer `webrtc` / `webrtc-dtls` release already fixes the
-        curve selection (least invasive). Current: `webrtc 0.7.3` → `webrtc-dtls 0.7.2`.
-  - [ ] B2. Otherwise add a `[patch.crates-io]` for `webrtc-dtls` with a minimal fix:
-        in `flight0.rs`, replace `e.elliptic_curves[0]` with the first curve in
-        `[P256, P384, X25519]` (server order of preference) that is present in
-        `e.elliptic_curves`; error only if none match.
-  - After any change: `cargo check` && `cargo fmt` (per AGENTS.md).
-- [ ] **C. Verify on a real target:** run on Windows or native Linux, share, open the
-      invite link in Chrome/Edge, approve the viewer → expect `Live` video + audio.
+- [x] **A. Confirm the cause cheaply (optional):** the diagnosis is confirmed
+      from the source rather than from a browser run: `NamedCurve::from(u16)`
+      maps everything outside `{P256, P384, X25519}` to `Unsupported`, and
+      `elliptic_curves[0]` was taken unconditionally.
+- [x] **B1. Check newer releases.** Every version between 0.7.2 and 0.11.0 still
+      uses `elliptic_curves[0]`; the fix first appears in **0.12.0**, which
+      belongs to the sans-I/O `webrtc` 0.20+/0.21 rewrite. Upgrading would mean
+      migrating the whole peer-connection/transceiver/track API, so it was
+      rejected.
+- [x] **B2. Patch `webrtc-dtls`.** Vendored `webrtc-dtls 0.7.2` at
+      `vendor/webrtc-dtls` (kept at version 0.7.2 so it still satisfies
+      `webrtc`'s `^0.7.2`) and wired it up with `[patch.crates-io]` in the root
+      `Cargo.toml`.
+
+      Deviation from the plan above: instead of imposing a server order of
+      preference, the code now takes the first curve *the client* offers that we
+      support — which is exactly what upstream 0.12.0 does. Keeping the client's
+      preference avoids second-guessing it and keeps the diff minimal. The
+      `None` case (empty list, or no overlap at all) returns the same fatal
+      `insufficient_security` alert the empty-list case already used.
+- [ ] **C. Verify on a real target:** **still outstanding.** Run on Windows or
+      native Linux, share, open the invite link in Chrome/Edge, and expect
+      `Live` video. The unit tests prove the selection logic but cannot prove a
+      browser negotiates DTLS.
 
 ## Repro / run notes
 
@@ -81,6 +93,9 @@ with the same browser.
   handles Windows/macOS and panics otherwise).
 - Run: `cargo run --release -- --config config.toml`
 - Invite link appears in the GUI Invite tab:
-  `http://127.0.0.1:8765/?room=<room>&pwd=<passcode>`
-- Approve the pending viewer in the GUI Viewers tab to start the stream.
+  `http://127.0.0.1:8765/?room=<room>&pwd=<passcode>`, or the configured
+  `webui.public_url` when set.
+- Approve the pending viewer in the GUI Viewers tab — or set
+  `auto_accept = true` to skip the prompt entirely. Add `auto_start = true` to
+  remove the "Start Sharing" click as well. See `docs/deployment.md`.
 - Set `webui.enabled = false` to fall back to the external (mirashare) signaller/viewer.

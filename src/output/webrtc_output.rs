@@ -120,7 +120,7 @@ impl WebRTCOutput {
         let config = config.fetch_ice_servers(signaller.clone()).await;
         let webrtc_config = Self::make_config(&config);
         let ice_servers = config.ice_servers.clone();
-        signaller.start().await;
+        signaller.start(config.room.clone()).await;
 
         // handle incoming connections
         tokio::spawn(async move {

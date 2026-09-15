@@ -39,13 +39,23 @@ impl Application for App {
     type Flags = (Args, Config);
 
     fn new((args, config): Self::Flags) -> (Self, Command<Message>) {
+        let auto_start = config.auto_start;
         let (intermediate_update_sender, intermediate_update_receiver) = channel(10);
         let intermediate_update_sender = Box::leak(Box::new(intermediate_update_sender));
-        let capturer = Capturer::new(
+        let mut capturer = Capturer::new(
             args,
             config,
             Arc::new(|| intermediate_update_sender.try_send(()).unwrap()),
         );
+
+        // Unattended start: skip the "Start Sharing" click. Together with
+        // `auto_accept` this means the app needs no interaction after launch,
+        // which is what makes it viable to start from a logon task.
+        if auto_start {
+            info!("auto_start is enabled; beginning to share immediately");
+            capturer.run();
+        }
+
         (
             App {
                 capturer,

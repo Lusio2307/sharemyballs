@@ -33,6 +33,28 @@ pub struct Config {
 
     #[serde(default = "default_webui")]
     pub webui: WebuiConfig,
+
+    /// Fixed session password. When unset (or empty) a random one is generated
+    /// per session and shown in the GUI's Invite tab.
+    #[serde(default)]
+    pub password: Option<String>,
+
+    /// Fixed room id. When unset, a random one is requested from the signaller
+    /// each session. A fixed room keeps the invite URL stable across restarts,
+    /// which is what makes a bookmarked viewer page useful.
+    #[serde(default)]
+    pub room: Option<String>,
+
+    /// Admit any viewer that passes the password check, without waiting for a
+    /// click in the GUI. Required for unattended operation. This does *not*
+    /// bypass authentication -- the password check still runs.
+    #[serde(default)]
+    pub auto_accept: bool,
+
+    /// Start sharing as soon as the app launches, instead of waiting for the
+    /// "Start Sharing" button.
+    #[serde(default)]
+    pub auto_start: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -41,6 +63,14 @@ pub struct WebuiConfig {
     pub enabled: bool,
     #[serde(default = "default_webui_port")]
     pub port: u16,
+    /// Address the embedded server binds to. Defaults to loopback; use
+    /// `0.0.0.0` to expose the viewer page to the rest of the LAN.
+    #[serde(default = "default_webui_bind")]
+    pub bind: String,
+    /// Base URL used to build the invite link, e.g.
+    /// `https://stream.example.com/`. Defaults to `http://<bind>:<port>/`.
+    #[serde(default)]
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -188,6 +218,8 @@ fn default_webui() -> WebuiConfig {
     WebuiConfig {
         enabled: default_webui_enabled(),
         port: default_webui_port(),
+        bind: default_webui_bind(),
+        public_url: None,
     }
 }
 
@@ -199,17 +231,20 @@ fn default_webui_port() -> u16 {
     8765
 }
 
+fn default_webui_bind() -> String {
+    "127.0.0.1".to_string()
+}
+
+/// No ICE servers by default.
+///
+/// The previous defaults pointed at `stun.l.google.com` plus a
+/// `Signaller`-credential entry, which resolved to nothing without Twilio.
+/// For a self-hosted deployment the only ICE server that should ever be
+/// contacted is the operator's own coturn instance, so that is left to
+/// `config.toml` rather than baked in here. With no ICE servers at all, WebRTC
+/// still uses host candidates, which is enough for viewers on the same LAN.
 fn default_ice_servers() -> Vec<IceServer> {
-    vec![
-        IceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_string()],
-            ..Default::default()
-        },
-        IceServer {
-            credential_type: IceCredentialType::Signaller,
-            ..Default::default()
-        },
-    ]
+    Vec::new()
 }
 
 async fn get_twilio_ice_servers(s: IceServer) -> Vec<IceServer> {
@@ -249,5 +284,90 @@ async fn get_twilio_ice_servers(s: IceServer) -> Vec<IceServer> {
             error!("Failed to get Twilio ICE servers: {:?}", e);
             vec![]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Defaults must not reach out to any third-party service, and unattended
+    /// behaviour must be opt-in.
+    #[test]
+    fn defaults_are_self_hosted() {
+        let config: Config = toml::from_str("").unwrap();
+
+        assert_eq!(config.password, None);
+        assert_eq!(config.room, None);
+        assert!(!config.auto_accept, "auto_accept must be opt-in");
+        assert!(!config.auto_start, "auto_start must be opt-in");
+
+        assert!(config.webui.enabled);
+        assert_eq!(config.webui.port, 8765);
+        assert_eq!(config.webui.bind, "127.0.0.1");
+        assert_eq!(config.webui.public_url, None);
+
+        assert!(
+            config.ice_servers.is_empty(),
+            "no STUN/TURN server may be configured by default"
+        );
+    }
+
+    #[test]
+    fn session_overrides_parse() {
+        let config: Config = toml::from_str(
+            r#"
+room = "desk"
+password = "hunter2"
+auto_accept = true
+auto_start = true
+
+[webui]
+bind = "0.0.0.0"
+public_url = "https://stream.example.com/"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.room.as_deref(), Some("desk"));
+        assert_eq!(config.password.as_deref(), Some("hunter2"));
+        assert!(config.auto_accept);
+        assert!(config.auto_start);
+        assert_eq!(config.webui.bind, "0.0.0.0");
+        assert_eq!(
+            config.webui.public_url.as_deref(),
+            Some("https://stream.example.com/")
+        );
+    }
+
+    /// The bundled presets are copied verbatim by users. `toml` rejects
+    /// duplicate keys outright, so this fails here rather than at startup --
+    /// both config.nvenc.toml and config.vp9.toml shipped with one.
+    #[test]
+    fn bundled_presets_parse() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/configs");
+        let mut checked = 0;
+
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            toml::from_str::<Config>(&text)
+                .unwrap_or_else(|e| panic!("{} is not a valid config: {e}", path.display()));
+            checked += 1;
+        }
+
+        assert!(checked >= 4, "expected the bundled presets to be present");
+    }
+
+    /// The documented example is what users copy first, so keep it loadable.
+    #[test]
+    fn example_config_parses() {
+        let text =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.toml.example"))
+                .unwrap();
+        toml::from_str::<Config>(&text).unwrap();
     }
 }

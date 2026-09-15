@@ -1,0 +1,97 @@
+# Mira Sharer configuration.
+#
+# Copy to `config.toml` next to the binary (Windows) or to
+# ~/Library/Application Support/Mira Sharer/config.toml (macOS), then edit.
+# For encoder-specific starting points see the presets in configs/.
+#
+# Every key below is optional; the values shown are the defaults except where a
+# comment says otherwise.
+
+# ---------------------------------------------------------------------------
+# Session identity
+# ---------------------------------------------------------------------------
+
+# Fixed room id. Leave unset (the default) to be assigned a random one each
+# session. Setting it keeps the invite URL stable, so a bookmarked viewer page
+# keeps working across restarts.
+# room = "desk"
+
+# Fixed session password. Leave unset (the default) to get a random one each
+# session, shown in the GUI's Invite tab. Anyone who can reach the page and
+# knows this password can watch, so treat it as a secret.
+# password = "change-me"
+
+# Admit viewers that present the correct password without waiting for a click
+# in the GUI. Required for unattended operation.
+#
+# This does NOT bypass authentication: the password check still runs first.
+# auto_accept = false
+
+# Begin sharing as soon as the app launches instead of waiting for the
+# "Start Sharing" button.
+# auto_start = false
+
+# Frame rate cap.
+max_fps = 60
+
+# ---------------------------------------------------------------------------
+# Embedded viewer page + signalling server
+# ---------------------------------------------------------------------------
+#
+# The app serves its own viewer page and implements the signalling protocol, so
+# no third-party server is involved. The page derives its WebSocket URL from
+# its own origin, which is why it works unchanged behind a TLS reverse proxy.
+
+[webui]
+enabled = true
+port = 8765
+# 127.0.0.1 keeps the page local to this machine. Use "0.0.0.0" to expose it to
+# the rest of the LAN.
+bind = "127.0.0.1"
+# Base URL used to build the invite link. Point this at the address viewers
+# actually use -- e.g. behind Caddy, "https://stream.example.com/". Defaults to
+# http://127.0.0.1:<port>/.
+# public_url = "https://stream.example.com/"
+
+# Only used when [webui] is disabled, i.e. when pointing the app at the
+# upstream hosted signalling server instead.
+# signaller_url = "wss://ws.mirashare.app"
+# viewer_url = "https://mirashare.app/"
+
+# ---------------------------------------------------------------------------
+# ICE / TURN
+# ---------------------------------------------------------------------------
+#
+# With no ICE servers listed, WebRTC still gathers host candidates, which is
+# enough for viewers on the same LAN. For viewers anywhere else, run coturn
+# (see deploy/) and list it here.
+#
+# Only ever list your own server: a public STUN/TURN relay sees the connection
+# metadata, and the app will happily advertise whatever you put here to every
+# viewer in the SDP offer.
+#
+# [[ice_servers]]
+# urls = ["stun:stream.example.com:3478"]
+#
+# [[ice_servers]]
+# urls = ["turn:stream.example.com:3478"]
+# username = "mira"
+# credential = "change-me-too"
+# credential_type = "Password"
+
+# ---------------------------------------------------------------------------
+# Encoder
+# ---------------------------------------------------------------------------
+
+[encoder]
+encoder = "libx264"
+# Windows screen capture hands us BGRA; nv12 is what the Windows path converts
+# to. Use "yuv420p" on macOS/Linux.
+pixel_format = "nv12"
+encoding = "video/H264"
+
+[encoder.options]
+profile = "baseline"
+preset = "ultrafast"
+tune = "zerolatency"
+forced-idr = "true"

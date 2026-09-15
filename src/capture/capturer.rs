@@ -57,7 +57,7 @@ impl Capturer {
             notify_update: notify_update.clone(),
             capture: Arc::new(Mutex::new(ScreenCaptureImpl::new(config.clone()).unwrap())),
             room_password: "".to_string(),
-            viewer_manager: Arc::new(ViewerManager::new(notify_update)),
+            viewer_manager: Arc::new(ViewerManager::new(notify_update, config.auto_accept)),
         }
     }
 
@@ -98,21 +98,26 @@ impl Capturer {
     }
 
     pub fn get_invite_link(&self) -> Option<String> {
+        let room = self.get_room_id().unwrap_or_default();
         if self.config.webui.enabled {
-            // the local page derives its WS URL from its own origin
-            Some(format!(
-                "http://127.0.0.1:{}/?room={}&pwd={}",
-                self.config.webui.port,
-                self.get_room_id().unwrap_or_default(),
-                self.room_password
-            ))
+            // The embedded page derives its WebSocket URL from its own origin,
+            // so this base only has to be a URL the viewer can reach. Setting
+            // `webui.public_url` (e.g. through Caddy over https) is what makes
+            // the link usable from off-box.
+            let mut base = self
+                .config
+                .webui
+                .public_url
+                .clone()
+                .unwrap_or_else(|| format!("http://127.0.0.1:{}/", self.config.webui.port));
+            if !base.ends_with('/') {
+                base.push('/');
+            }
+            Some(format!("{base}?room={room}&pwd={}", self.room_password))
         } else {
             Some(format!(
-                "{}?room={}&pwd={}&signaller={}",
-                self.config.viewer_url,
-                self.get_room_id().unwrap_or_default(),
-                self.room_password,
-                self.config.signaller_url
+                "{}?room={room}&pwd={}&signaller={}",
+                self.config.viewer_url, self.room_password, self.config.signaller_url
             ))
         }
     }
@@ -200,7 +205,21 @@ impl Capturer {
         let notify_update = self.notify_update.clone();
         let capture = self.capture.clone();
 
-        let password_auth = Arc::new(PasswordAuthenticator::random().unwrap());
+        // A configured password keeps the invite URL stable across restarts;
+        // otherwise each session gets a fresh random one. A blank value counts
+        // as unset so a stray empty line in config.toml is not fatal.
+        let password_auth = Arc::new(match config.password.as_deref() {
+            Some(password) if !password.trim().is_empty() => {
+                match PasswordAuthenticator::new(password.to_string()) {
+                    Ok(auth) => auth,
+                    Err(e) => {
+                        error!("Configured password rejected ({e}); using a random one instead");
+                        PasswordAuthenticator::random().unwrap()
+                    }
+                }
+            }
+            _ => PasswordAuthenticator::random().unwrap(),
+        });
         let viewer_manager = self.viewer_manager.clone();
         self.room_password = password_auth.password();
 

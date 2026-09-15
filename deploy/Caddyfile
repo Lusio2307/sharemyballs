@@ -1,0 +1,23 @@
+# Reverse proxy for the sharer's embedded viewer page and signalling WebSocket.
+#
+# Caddy provisions and renews the TLS certificate automatically, and
+# `reverse_proxy` passes the WebSocket upgrade through untouched -- so the
+# browser talks `wss://` with no extra configuration. The viewer page derives
+# its WebSocket URL from its own origin, which is why serving it here is all
+# that is needed to make remote viewing work.
+#
+# Run on the machine that runs the sharer:
+#     caddy run --config deploy/Caddyfile
+#
+# Replace stream.example.com with your own domain (and point its A/AAAA record
+# at this machine, with 443 forwarded if it is behind NAT).
+
+stream.example.com {
+	reverse_proxy 127.0.0.1:8765
+
+	# The viewer is a single self-contained page. Don't let a proxy or the
+	# browser hold on to a stale copy across a sharer upgrade.
+	header {
+		Cache-Control "no-store"
+	}
+}

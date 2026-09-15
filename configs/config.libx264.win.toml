@@ -1,15 +1,13 @@
-signaller_url = "wss://ws.mirashare.app"
-viewer_url = "https://mirashare.app/"
+# Software x264 -- the safe default, and the recommended Windows preset.
+#
+# Session, [webui] and [[ice_servers]] settings live in config.toml; copy the
+# [encoder] block below into it. See ../config.toml.example for the rest.
+#
+# This is the fallback when there is no usable GPU encoder: it runs anywhere,
+# at the cost of CPU. For 1080p60 expect a few cores of a modern CPU to be
+# busy.
+
 max_fps = 60
-
-[[ice_servers]]
-urls = ["stun:stun.l.google.com:19302"]
-
-[[ice_servers]]
-urls = ["turn:openrelay.metered.ca:80"]
-username = "openrelayproject"
-credential = "openrelayproject"
-credential_type = "Password"
 
 [encoder]
 encoder = "libx264"
@@ -17,7 +15,8 @@ pixel_format = "nv12"
 encoding = "video/H264"
 
 [encoder.options]
+# baseline avoids B-frames, which is what keeps latency low.
 profile = "baseline"
-tune = "zerolatency"
 preset = "ultrafast"
+tune = "zerolatency"
 forced-idr = "true"
