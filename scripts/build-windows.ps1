@@ -55,8 +55,19 @@ Write-Host "FFMPEG_INCLUDE_DIR = $env:FFMPEG_INCLUDE_DIR"
 Write-Host "FFMPEG_LIB_DIR     = $env:FFMPEG_LIB_DIR"
 
 Set-Location $RepoRoot
+
+# Cargo writes its progress to stderr, and PowerShell converts native stderr into
+# error records. With $ErrorActionPreference = 'Stop' that aborts the script
+# mid-build -- for example as soon as the caller redirects the output
+# (`build-windows.ps1 2>&1 | ...`), which leaves the DLLs uncopied while looking
+# like a build failure. Relax the preference for this one call and check the exit
+# code explicitly instead.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 cargo build --release
-if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
+$buildExit = $LASTEXITCODE
+$ErrorActionPreference = $previousPreference
+if ($buildExit -ne 0) { throw "cargo build failed with exit code $buildExit" }
 
 # FFmpeg is linked dynamically, so its DLLs must be findable at process start.
 #
