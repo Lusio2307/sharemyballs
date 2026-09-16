@@ -223,15 +223,25 @@ async function onOffer(msg) {
     });
     if (iceServers.length) pc.setConfiguration({ iceServers });
 
+    // RTCTrackEvent carries no `kind` of its own -- the kind lives on the track.
+    // Reading `ev.kind` here left both branches unreachable, so the video element
+    // never got a source: the overlay was hidden anyway and the stage showed
+    // black forever, even though the sharer was sending (and this page was
+    // decoding) perfectly good frames.
     pc.ontrack = (ev) => {
-      const stream = ev.streams[0];
-      if (!stream) return;
-      if (ev.kind === "video") video.srcObject = stream;
-      else audio.srcObject = stream;
-      stage.classList.add("live");
-      overlay.classList.add("hidden");
-      video.play().catch(() => {});
-      audio.play().catch(() => audiohint.classList.add("visible"));
+      const kind = ev.track.kind;
+      const stream = ev.streams[0] || new MediaStream([ev.track]);
+      if (kind === "video") {
+        video.srcObject = stream;
+        video.play().catch(() => {});
+        // Only reveal the stage once there is a picture to put on it.
+        setStatus("");
+        stage.classList.add("live");
+        overlay.classList.add("hidden");
+      } else if (kind === "audio") {
+        audio.srcObject = stream;
+        audio.play().catch(() => audiohint.classList.add("visible"));
+      }
     };
 
     pc.onicecandidate = (ev) => {

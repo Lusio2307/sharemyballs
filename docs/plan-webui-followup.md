@@ -1,17 +1,35 @@
 # Plan: WebUI — DTLS follow-up
 
-Status: **fix implemented; browser verification outstanding.** Companion to
-`plan-local-webui.md`. See `vendor/README.md` for the change and
+Status: **done; verified in Chrome on Windows.** Companion to
+`plan-local-webui.md`. See `vendor/README.md` for the DTLS change and
 `tests/dtls_curve_selection.rs` for the regression tests.
 
 ## TL;DR
 
-The new embedded WebUI (`src/webui/`, page at `webui/index.html`) is **verified working**
-end-to-end over loopback. The one real issue to fix is a **DTLS handshake bug in the
-`webrtc-dtls 0.7.2` dependency** that affects the old mirashare flow identically.
+Two independent bugs produced the same "black screen":
 
-The other observed problem (black screen) was purely a WSL capture limitation; the real app
-runs on Windows / native Linux where `xcap` capture works, so it is **not** a concern here.
+1. **DTLS handshake failure** in the `webrtc-dtls 0.7.2` dependency (fixed in
+   `vendor/webrtc-dtls`, see below). It affected the old mirashare flow identically.
+2. **The viewer page never attached the video track.** `webui/index.html` read
+   `ev.kind` in `pc.ontrack`, but `RTCTrackEvent` has no `kind` — the kind is on
+   `ev.track`. Both branches were therefore unreachable, the overlay was hidden
+   anyway, and the stage stayed black while Chrome happily decoded the frames.
+   Fixed by branching on `ev.track.kind` (`webui/index.html`).
+
+With both fixes, Windows + Chrome shows live 4K video (see "Verification" below).
+
+## Second bug: the page dropped the video track
+
+`pc.ontrack` used `ev.kind === "video"`. `RTCTrackEvent.prototype` exposes only
+`receiver`, `track`, `streams` and `transceiver` (`"kind" in RTCTrackEvent.prototype`
+is `false`), so `ev.kind` was `undefined`: neither branch ran, `video.srcObject` was
+never set, and the `live` class + hidden overlay still turned the page into a black
+stage. `getStats()` on the affected page showed `dtlsState: connected`, 278 frames
+decoded at 3840x2160 — and `video.videoWidth === 0`.
+
+The handler now branches on `ev.track.kind`, falls back to `new MediaStream([ev.track])`
+when the SDP carries no msid, and only reveals the stage for a *video* track (an
+audio-only offer would otherwise reproduce the same black stage).
 
 ## What was verified working
 
@@ -24,13 +42,14 @@ Ran `./target/release/mira_sharer --config config.toml` on Linux (WSL). Observed
 
 So: page serving, signalling protocol, auth flow, and NAT traversal are all good.
 
-## Note: WSL black screen (not a concern)
+## Note: WSL black screen (a separate, capture-side limitation)
 
 During the WSL test the screen was black because `xcap` → `libwayshot` can't grab frames
 without `ZxdgOutputManagerV1` v3 (which WSLg lacks). The real app targets Windows / native
-Linux where capture works, so this is dropped — no action needed.
+Linux where capture works. This is unrelated to the two bugs above: on Windows capture was
+demonstrably fine (Chrome decoded 3840x2160 frames the whole time).
 
-## The issue — DTLS handshake fails (real bug in `webrtc-dtls 0.7.2`)
+## The first issue — DTLS handshake fails (real bug in `webrtc-dtls 0.7.2`)
 
 ```
 WARN webrtc_dtls … Unsupported Extension Type 0 43 / 45 / 51   (harmless — see note)
@@ -82,13 +101,22 @@ with the same browser.
       preference avoids second-guessing it and keeps the diff minimal. The
       `None` case (empty list, or no overlap at all) returns the same fatal
       `insufficient_security` alert the empty-list case already used.
-- [ ] **C. Verify on a real target:** **still outstanding.** Run on Windows or
-      native Linux, share, open the invite link in Chrome/Edge, and expect
-      `Live` video. The unit tests prove the selection logic but cannot prove a
-      browser negotiates DTLS.
+- [x] **C. Verify on a real target:** done on Windows with `config.toml` (`room`/`password`
+      pinned, `auto_start`/`auto_accept` on) and headless Chrome driven over CDP. After both
+      fixes the page plays by itself: `video.srcObject` holds the `video` track,
+      `readyState 4`, `videoWidth/Height 3840x2160`, `currentTime` advancing,
+      `dtlsState: connected`, `framesDecoded` climbing, and the decoded panel sampled
+      non-black (99.8-100% of sampled pixels above black).
+
+      Note this also retires the earlier "black screen = WSL capture" theory: capture,
+      encode, ICE, DTLS and SRTP were all healthy; the picture simply never reached the
+      `<video>` element.
 
 ## Repro / run notes
 
+- `webui/index.html` is compiled into the binary with `include_str!`, so a page fix needs a
+  rebuild (`scripts/build-windows.ps1`) and an app restart — reloading the browser tab is
+  not enough.
 - Linux requires the `--config <path>` flag (`config_path()` in `src/main.rs` only
   handles Windows/macOS and panics otherwise).
 - Run: `cargo run --release -- --config config.toml`

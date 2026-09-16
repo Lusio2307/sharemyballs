@@ -559,6 +559,49 @@ mod tests {
         server.abort();
     }
 
+    /// `INDEX_HTML` with full-line `//` comments removed.
+    ///
+    /// The page comments deliberately *name* the bug they warn about, so the
+    /// assertions below must not see them. Only full-line comments are stripped,
+    /// which also avoids being fooled by `//` inside URLs such as `ws://`.
+    fn page_source_without_comments() -> String {
+        INDEX_HTML
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The viewer page must take the track kind from the track.
+    ///
+    /// `RTCTrackEvent` has no `kind` of its own -- the kind lives on
+    /// `event.track`. Reading `ev.kind` (as the page once did) leaves every
+    /// branch in `pc.ontrack` unreachable, so `<video>.srcObject` is never set:
+    /// the overlay is hidden anyway and the viewer sees a black screen while the
+    /// frames decode perfectly. See `docs/troubleshooting.md`.
+    #[test]
+    fn viewer_page_reads_kind_from_the_track() {
+        let page = page_source_without_comments();
+
+        assert!(
+            page.contains("track.kind"),
+            "webui/index.html must decide video vs audio by the track's kind"
+        );
+        assert!(
+            page.contains("video.srcObject"),
+            "webui/index.html must attach the video track to the <video> element"
+        );
+
+        for wrong in ["ev.kind", "event.kind", "evt.kind"] {
+            assert!(
+                !page.contains(wrong),
+                "webui/index.html reads `{wrong}`, but RTCTrackEvent has no `kind`: \
+                 no track would ever be attached and the viewer shows a black screen. \
+                 Use `track.kind`."
+            );
+        }
+    }
+
     // plain TCP GET / to avoid adding a dev-dependency
     async fn reqwest_free_get(port: u16) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

@@ -119,7 +119,9 @@ auto_start = true      # begin sharing on launch
 ```
 
 Deployment (TLS via Caddy, coturn for off-LAN viewers, firewall ports) is
-covered in [docs/deployment.md](docs/deployment.md).
+covered in [docs/deployment.md](docs/deployment.md). Planned work — LAN access,
+dropping the desktop GUI for a browser admin page, and a codebase cleanup — is
+tracked in [docs/roadmap.md](docs/roadmap.md).
 
 ## Local WebUI
 
@@ -134,6 +136,8 @@ bind = "127.0.0.1"   # use "0.0.0.0" to expose the page to the LAN
 ```
 
 To use it: start sharing, then open the **Invite Link** shown on the sharing page (or just `http://127.0.0.1:8765/` and enter the room id and passcode), and accept the pending viewer in the app — or set `auto_accept = true` to skip that step. Setting `webui.enabled = false` restores the original mirashare flow. If the port is already in use, the error is logged and the app continues with the configured `signaller_url`.
+
+If the page stays black after you approve a viewer, start with [docs/troubleshooting.md](docs/troubleshooting.md) — the stream is usually fine and the diagnosis is a couple of `getStats()` calls.
 
 ## License
 
