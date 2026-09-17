@@ -7,10 +7,20 @@ BUILD_DIR=./build/$(ARCH)
 
 FFMPEG_ENV_DIR=
 
+WEBUI_DIR=webui/sharemyballs-webui
+
+.PHONY: webui-build
+
 default:
 	@echo ":)"
 
-bundle-macos:
+# The web UI is inlined into the binary with include_str! (see build.rs) and its
+# dist/ is gitignored, so it must be built before cargo reads it. Phony because
+# a `webui/` directory exists at the repo root.
+webui-build:
+	cd $(WEBUI_DIR) && bun install --frozen-lockfile && bun run build
+
+bundle-macos: webui-build
 	if [ -z "$(SIGNER)" ]; then echo "SIGNER not set"; exit 1; fi
 	if [ -z "$(KEYCHAIN_PROFILE)" ]; then echo "KEYCHAIN_PROFILE not set"; exit 1; fi
 	if [ -z "$(FFMPEG_ENV_DIR)" ]; then echo "FFMPEG_ENV_DIR not set"; exit 1; fi

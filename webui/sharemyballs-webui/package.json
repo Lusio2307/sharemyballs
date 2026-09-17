@@ -6,10 +6,12 @@
     "#/*": "./src/*"
   },
   "scripts": {
-    "dev": "vite dev --port 3000",
+    "dev": "tsr generate && vite --port 3000",
     "generate-routes": "tsr generate",
-    "build": "vite build",
+    "build": "tsr generate && vite build",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "lint": "eslint",
     "format": "prettier --write . && eslint --fix",
     "check": "prettier --check ."
@@ -17,18 +19,11 @@
   "dependencies": {
     "@chakra-ui/react": "^3.37.0",
     "@emotion/react": "^11.14.0",
-    "@tailwindcss/vite": "^4.3.3",
-    "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",
-    "@tanstack/react-router-devtools": "latest",
-    "@tanstack/react-start": "latest",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "tailwindcss": "^4.3.3"
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@tailwindcss/typography": "^0.5.20",
-    "@tanstack/devtools-vite": "latest",
     "@tanstack/eslint-config": "latest",
     "@tanstack/intent": "^0.4.0",
     "@tanstack/router-cli": "^1.167.38",
@@ -37,14 +32,11 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "eslint": "^9.39.5",
+    "jsdom": "^28.0.0",
     "prettier": "^3.9.7",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "lightningcss"
-    ]
+    "typescript": "^6",
+    "vite": "^8.3.0",
+    "vite-plugin-singlefile": "^2.3.3",
+    "vitest": "^4.0.18"
   }
 }

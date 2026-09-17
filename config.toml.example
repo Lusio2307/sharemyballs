@@ -52,6 +52,11 @@ bind = "127.0.0.1"
 # actually use -- e.g. behind Caddy, "https://stream.example.com/". Defaults to
 # http://127.0.0.1:<port>/.
 # public_url = "https://stream.example.com/"
+# Secret for the /admin control plane: start or stop sharing and accept,
+# decline or kick viewers from a browser. When this is unset or empty -- the
+# default -- /admin and /api/admin/* are not served at all. Do not reuse the
+# viewer passcode here: every viewer is given that one.
+# admin_password = "<a different secret>"
 
 # Only used when [webui] is disabled, i.e. when pointing the app at the
 # upstream hosted signalling server instead.

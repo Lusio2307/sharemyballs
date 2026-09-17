@@ -1,87 +1,138 @@
+import { Box, Button, Heading, Input, Text, VStack } from '@chakra-ui/react'
 import { createFileRoute } from '@tanstack/react-router'
+import { useCallback, useMemo, useState } from 'react'
+import { ViewerStage } from '#/components/ViewerStage'
+import type { ViewerSessionConfig } from '#/hooks/useViewerSession'
+import { useViewerSession } from '#/hooks/useViewerSession'
+import { signallerUrl } from '#/lib/protocol'
+import { makeViewerId } from '#/lib/uuid'
 
-export const Route = createFileRoute('/')({ component: App })
+export const Route = createFileRoute('/')({ component: ViewerPage })
 
-function App() {
+// One id per *page load*, at module scope on purpose.
+//
+// `crypto.randomUUID()` is deliberately not used -- see `src/lib/uuid.ts`. And
+// because a per-render id would re-join the room on every render, and a
+// per-effect id would send two `join`s under React 19's StrictMode double
+// invocation, this is the only place the id is minted.
+const VIEWER_ID = makeViewerId()
+
+/**
+ * The invite URL contract is fixed by the Rust side: `Capturer::get_invite_link`
+ * emits `{public_url or http://127.0.0.1:<port>/}?room=<room>&pwd=<password>`.
+ * `signaller` is an optional development override; without it the socket URL is
+ * derived from the page's own origin, which is what makes the
+ * `webui.public_url` / reverse-proxy path work.
+ */
+function readInvite(search: string) {
+  const params = new URLSearchParams(search)
+  return {
+    room: params.get('room')?.trim() ?? '',
+    password: params.get('pwd') ?? '',
+    signaller: params.get('signaller'),
+  }
+}
+
+function ViewerPage() {
+  const invite = useMemo(() => readInvite(window.location.search), [])
+
+  // Present when the URL carries no invite: the same fallback the retired page
+  // had, so a bare `http://host:8765/` is still usable.
+  const [room, setRoom] = useState(invite.room)
+  const [password, setPassword] = useState(invite.password)
+  const [config, setConfig] = useState<ViewerSessionConfig | null>(() =>
+    invite.room && invite.password
+      ? {
+          room: invite.room,
+          password: invite.password,
+          viewerId: VIEWER_ID,
+          signaller: signallerUrl(window.location, invite.signaller),
+        }
+      : null,
+  )
+
+  const session = useViewerSession(config)
+
+  const join = useCallback(() => {
+    const trimmedRoom = room.trim()
+    if (!trimmedRoom || !password) {
+      return
+    }
+    setConfig({
+      room: trimmedRoom,
+      password,
+      viewerId: VIEWER_ID,
+      signaller: signallerUrl(window.location, invite.signaller),
+    })
+  }, [room, password, invite.signaller])
+
+  if (!config) {
+    return (
+      <Box
+        h="100%"
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        p="6"
+      >
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            join()
+          }}
+        >
+          <VStack gap="4" align="stretch" minW={{ base: '260px', sm: '320px' }}>
+            <Heading size="lg">Mira Sharer</Heading>
+            <Text fontSize="sm" color="fg.muted">
+              Paste the invite link, or type the room and passcode from it.
+            </Text>
+            <Box>
+              <Text fontSize="xs" color="fg.muted" mb="1">
+                Room
+              </Text>
+              <Input
+                autoFocus
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Room"
+                value={room}
+                onChange={(event) => setRoom(event.target.value)}
+              />
+            </Box>
+            <Box>
+              <Text fontSize="xs" color="fg.muted" mb="1">
+                Passcode
+              </Text>
+              <Input
+                autoComplete="off"
+                placeholder="Passcode"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </Box>
+            <Button
+              type="submit"
+              colorPalette="blue"
+              disabled={!room.trim() || !password}
+            >
+              Join
+            </Button>
+          </VStack>
+        </form>
+      </Box>
+    )
+  }
+
   return (
-    <main className="page-wrap px-4 pb-8 pt-14">
-      <section className="island-shell rise-in relative overflow-hidden rounded-[2rem] px-6 py-10 sm:px-10 sm:py-14">
-        <div className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full bg-[radial-gradient(circle,rgba(79,184,178,0.32),transparent_66%)]" />
-        <div className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full bg-[radial-gradient(circle,rgba(47,106,74,0.18),transparent_66%)]" />
-        <p className="island-kicker mb-3">TanStack Start Base Template</p>
-        <h1 className="display-title mb-5 max-w-3xl text-4xl leading-[1.02] font-bold tracking-tight text-[var(--sea-ink)] sm:text-6xl">
-          Start simple, ship quickly.
-        </h1>
-        <p className="mb-8 max-w-2xl text-base text-[var(--sea-ink-soft)] sm:text-lg">
-          This base starter intentionally keeps things light: two routes, clean
-          structure, and the essentials you need to build from scratch.
-        </p>
-        <div className="flex flex-wrap gap-3">
-          <a
-            href="/about"
-            className="rounded-full border border-[rgba(50,143,151,0.3)] bg-[rgba(79,184,178,0.14)] px-5 py-2.5 text-sm font-semibold text-[var(--lagoon-deep)] no-underline transition hover:-translate-y-0.5 hover:bg-[rgba(79,184,178,0.24)]"
-          >
-            About This Starter
-          </a>
-          <a
-            href="https://tanstack.com/router"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-full border border-[rgba(23,58,64,0.2)] bg-white/50 px-5 py-2.5 text-sm font-semibold text-[var(--sea-ink)] no-underline transition hover:-translate-y-0.5 hover:border-[rgba(23,58,64,0.35)]"
-          >
-            Router Guide
-          </a>
-        </div>
-      </section>
-
-      <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          [
-            'Type-Safe Routing',
-            'Routes and links stay in sync across every page.',
-          ],
-          [
-            'Server Functions',
-            'Call server code from your UI without creating API boilerplate.',
-          ],
-          [
-            'Streaming by Default',
-            'Ship progressively rendered responses for faster experiences.',
-          ],
-          [
-            'Tailwind Native',
-            'Design quickly with utility-first styling and reusable tokens.',
-          ],
-        ].map(([title, desc], index) => (
-          <article
-            key={title}
-            className="island-shell feature-card rise-in rounded-2xl p-5"
-            style={{ animationDelay: `${index * 90 + 80}ms` }}
-          >
-            <h2 className="mb-2 text-base font-semibold text-[var(--sea-ink)]">
-              {title}
-            </h2>
-            <p className="m-0 text-sm text-[var(--sea-ink-soft)]">{desc}</p>
-          </article>
-        ))}
-      </section>
-
-      <section className="island-shell mt-8 rounded-2xl p-6">
-        <p className="island-kicker mb-2">Quick Start</p>
-        <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-[var(--sea-ink-soft)]">
-          <li>
-            Edit <code>src/routes/index.tsx</code> to customize the home page.
-          </li>
-          <li>
-            Update <code>src/components/Header.tsx</code> and{' '}
-            <code>src/components/Footer.tsx</code> for brand links.
-          </li>
-          <li>
-            Add routes in <code>src/routes</code> and tweak visual tokens in{' '}
-            <code>src/styles.css</code>.
-          </li>
-        </ul>
-      </section>
-    </main>
+    <ViewerStage
+      state={session.state}
+      message={session.message}
+      streams={session.streams}
+      audioBlocked={session.audioBlocked}
+      onEnableAudio={session.enableAudio}
+      onAudioPlaying={session.audioStarted}
+      onReconnect={session.reconnect}
+      canReconnect={session.canReconnect}
+    />
   )
 }

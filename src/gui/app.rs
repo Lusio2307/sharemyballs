@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures_util::SinkExt;
 use iced::widget::row;
@@ -6,9 +6,8 @@ use iced::Alignment::Center;
 use iced::{executor, Application, Command, Length, Subscription};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use crate::capture::capturer::{Args, Capturer};
+use crate::capture::capturer::Capturer;
 use crate::column_iced;
-use crate::config::Config;
 use crate::gui::component::sharing::SharingPage;
 use crate::gui::component::start::StartPage;
 use crate::gui::component::{sharing, start, Component};
@@ -16,7 +15,10 @@ use crate::gui::theme::widget::Element;
 use crate::gui::theme::Theme;
 
 pub struct App {
-    capturer: Capturer,
+    /// Shared with the embedded server's admin control plane, which is why it is
+    /// no longer owned outright. `std::sync::Mutex` because the GUI only uses
+    /// synchronous `Capturer` methods on it.
+    capturer: Arc<Mutex<Capturer>>,
     pub start_page: StartPage,
     pub sharing_page: SharingPage,
     intermediate_update_receiver: Option<Receiver<()>>,
@@ -36,24 +38,19 @@ impl Application for App {
     type Message = Message;
 
     type Theme = Theme;
-    type Flags = (Args, Config);
+    /// `Args` and `Config` now ride along inside the `Capturer` (both are public
+    /// fields), so the flags only carry the shared handle and the update channel.
+    type Flags = (Arc<Mutex<Capturer>>, Receiver<()>);
 
-    fn new((args, config): Self::Flags) -> (Self, Command<Message>) {
-        let auto_start = config.auto_start;
-        let (intermediate_update_sender, intermediate_update_receiver) = channel(10);
-        let intermediate_update_sender = Box::leak(Box::new(intermediate_update_sender));
-        let mut capturer = Capturer::new(
-            args,
-            config,
-            Arc::new(|| intermediate_update_sender.try_send(()).unwrap()),
-        );
-
+    fn new((capturer, intermediate_update_receiver): Self::Flags) -> (Self, Command<Message>) {
         // Unattended start: skip the "Start Sharing" click. Together with
         // `auto_accept` this means the app needs no interaction after launch,
         // which is what makes it viable to start from a logon task.
+        let auto_start = capturer.lock().unwrap().config.auto_start;
+
         if auto_start {
             info!("auto_start is enabled; beginning to share immediately");
-            capturer.run();
+            capturer.lock().unwrap().run();
         }
 
         (
@@ -73,18 +70,22 @@ impl Application for App {
 
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::Start(message) => self.start_page.update(
-                message,
-                start::UpdateProps {
-                    capturer: &mut self.capturer,
-                },
-            ),
+            Message::Start(message) => {
+                let mut capturer = self.capturer.lock().unwrap();
+                self.start_page.update(
+                    message,
+                    start::UpdateProps {
+                        capturer: &mut capturer,
+                    },
+                )
+            }
             Message::Sharing(message) => {
-                let viewer_manager = self.capturer.get_viewer_manager();
+                let mut capturer = self.capturer.lock().unwrap();
+                let viewer_manager = capturer.get_viewer_manager();
                 self.sharing_page.update(
                     message,
                     sharing::UpdateProps {
-                        capturer: &mut self.capturer,
+                        capturer: &mut capturer,
                         viewer_manager,
                     },
                 )
@@ -103,9 +104,10 @@ impl Application for App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let is_sharing = self.capturer.is_running();
+        let capturer = self.capturer.lock().unwrap();
+        let is_sharing = capturer.is_running();
         let element: Element<Message> = row![column_iced![if is_sharing {
-            let viewer_manager = self.capturer.get_viewer_manager();
+            let viewer_manager = capturer.get_viewer_manager();
             let handle = tokio::runtime::Handle::current();
             let (pending_viewers, viewing_viewers) = tokio::task::block_in_place(move || {
                 handle.block_on(async move {
@@ -116,15 +118,15 @@ impl Application for App {
             });
 
             self.sharing_page.view(sharing::ViewProps {
-                room_id: self.capturer.get_room_id().unwrap_or_default(),
-                room_password: self.capturer.get_room_password().unwrap_or_default(),
-                invite_link: self.capturer.get_invite_link().unwrap_or_default(),
+                room_id: capturer.get_room_id().unwrap_or_default(),
+                room_password: capturer.get_room_password().unwrap_or_default(),
+                invite_link: capturer.get_invite_link().unwrap_or_default(),
                 pending_viewers,
                 viewing_viewers,
             })
         } else {
             self.start_page.view(start::ViewProps {
-                capturer: &self.capturer,
+                capturer: &capturer,
             })
         }]
         .spacing(12)]

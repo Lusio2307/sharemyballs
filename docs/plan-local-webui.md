@@ -1,5 +1,12 @@
 # Plan: Embedded local WebUI + signalling server (replaces mirashare for local viewing)
 
+> **Superseded in part (web UI).** The embedded server, its signalling protocol and the
+> config keys described here still stand. The page, however, is no longer
+> `webui/index.html`: it is the bundled SPA at `webui/sharemyballs-webui/`, embedded from
+> its `dist/index.html` (see `WEBUI.md`), and its WebRTC viewer has been retired pending a
+> port onto that SPA. Read the `webui/index.html` sections below as a description of the
+> viewer that has to come back.
+
 ## Goal
 
 One self-contained feature: the sharer app starts a small embedded axum server that (a) serves a local viewer page and (b) implements the mirashare signalling protocol, so the whole view path works with **no third-party server and no separate repo**. The existing mirashare path stays available via config.

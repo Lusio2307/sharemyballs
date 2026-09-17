@@ -5,6 +5,14 @@
 //! between the sharer's `WebSocketSignaller` (client) and browser viewers.
 //! Messages are relayed as raw JSON; only the `type`/`from`/`to`/`room`
 //! envelope fields are parsed for routing.
+//!
+//! When `webui.admin_password` is configured it also serves the operator
+//! control plane (`GET /admin` and `/api/admin/*`), implemented in `admin.rs`.
+//! Without a secret those routes are not registered at all.
+
+mod admin;
+
+pub use admin::AdminState;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -20,7 +28,10 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use uuid::Uuid;
 
-const INDEX_HTML: &str = include_str!("../../webui/index.html");
+/// The built SPA, inlined into the binary so the packaged `.exe`/`.app` needs
+/// no runtime file next to it. `webui/sharemyballs-webui/dist/` is produced by
+/// `bun run build`; see `build.rs` for the check that it exists.
+pub(crate) const INDEX_HTML: &str = include_str!("../../webui/sharemyballs-webui/dist/index.html");
 
 const IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 const REAP_INTERVAL: Duration = Duration::from_secs(10);
@@ -29,20 +40,27 @@ static NEXT_CONN_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Start the embedded webui + signalling server on `bind`:`port`.
 /// Runs until the process exits.
-pub async fn start(bind: &str, port: u16) -> std::io::Result<()> {
+///
+/// `admin` carries the `/admin` control plane. Pass `None` when no
+/// `webui.admin_password` is configured: the admin routes are then not served
+/// at all (fail closed), rather than served and checked.
+pub async fn start(bind: &str, port: u16, admin: Option<AdminState>) -> std::io::Result<()> {
     let listener = TcpListener::bind((bind, port)).await?;
     info!("WebUI listening on http://{bind}:{port}");
-    serve(listener).await
+    if admin.is_some() {
+        info!("WebUI admin control plane enabled at http://{bind}:{port}/admin");
+    }
+    serve(listener, admin).await
 }
 
-async fn serve(listener: TcpListener) -> std::io::Result<()> {
+async fn serve(listener: TcpListener, admin: Option<AdminState>) -> std::io::Result<()> {
     let state = Arc::new(SignallerState::default());
     {
         let state = state.clone();
         tokio::spawn(reap_idle(state));
     }
 
-    let router = Router::new()
+    let mut router = Router::new()
         .route("/", get(|| async { Html(INDEX_HTML) }))
         .route(
             "/signaller",
@@ -51,6 +69,10 @@ async fn serve(listener: TcpListener) -> std::io::Result<()> {
                 async move { ws.on_upgrade(move |socket| handle_ws(state, socket)) }
             }),
         );
+
+    if let Some(admin) = admin {
+        router = router.merge(admin::router(admin));
+    }
 
     axum::serve(listener, router).await
 }
@@ -371,9 +393,14 @@ async fn reap_idle(state: Arc<SignallerState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::ViewerIdentifier;
+    use crate::session::SessionControl;
     use futures_util::{SinkExt, StreamExt};
     use serde_json::{json, Value};
     use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
+
+    /// The admin secret used by the tests below.
+    const SECRET: &str = "s3cret-admin";
 
     type Conn = tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -393,7 +420,7 @@ mod tests {
     async fn signaller_relay_roundtrip() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = tokio::spawn(serve(listener));
+        let server = tokio::spawn(serve(listener, None));
 
         let url = format!("ws://127.0.0.1:{port}/signaller");
         let (mut sharer, _) = connect_async(&url).await.unwrap();
@@ -490,6 +517,27 @@ mod tests {
         // index page is served
         let body = reqwest_free_get(port).await;
         assert!(body.contains("Mira Sharer"));
+        // `INDEX_HTML` must be the *built* page. If the Vite dev template gets
+        // embedded instead, `/src/main.tsx` is referenced but never served, so
+        // the browser shows a blank page while this test still passes.
+        assert!(
+            !body.contains("/src/main.tsx"),
+            "GET / served the unbundled Vite entry (`/src/main.tsx`): \
+             webui/sharemyballs-webui/dist/index.html is a dev template, not a build. \
+             Run `bun run build` in webui/sharemyballs-webui."
+        );
+        // Chakra's semantic tokens (`fg`, `bg`, `border`, ...) resolve to their
+        // *light* values unless `.dark` is on an ancestor, and the app paints a
+        // black background -- so dropping the class renders near-black text on
+        // black. Nothing else catches that: it type-checks, lints and builds
+        // cleanly.
+        assert!(
+            body.contains("class=\"dark\""),
+            "GET / served a page without `class=\"dark\"` on <html>: every Chakra \
+             semantic token would fall back to its light value (dark text on the \
+             black background). See index.html; run `bun run build` in \
+             webui/sharemyballs-webui."
+        );
 
         server.abort();
     }
@@ -500,7 +548,7 @@ mod tests {
     async fn start_honours_requested_room() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = tokio::spawn(serve(listener));
+        let server = tokio::spawn(serve(listener, None));
 
         let url = format!("ws://127.0.0.1:{port}/signaller");
         let (mut sharer, _) = connect_async(&url).await.unwrap();
@@ -519,7 +567,7 @@ mod tests {
     async fn start_falls_back_when_requested_room_is_taken() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = tokio::spawn(serve(listener));
+        let server = tokio::spawn(serve(listener, None));
 
         let url = format!("ws://127.0.0.1:{port}/signaller");
         let (mut first, _) = connect_async(&url).await.unwrap();
@@ -545,7 +593,7 @@ mod tests {
     async fn blank_requested_room_is_assigned_one() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let server = tokio::spawn(serve(listener));
+        let server = tokio::spawn(serve(listener, None));
 
         let url = format!("ws://127.0.0.1:{port}/signaller");
         let (mut sharer, _) = connect_async(&url).await.unwrap();
@@ -559,61 +607,366 @@ mod tests {
         server.abort();
     }
 
-    /// `INDEX_HTML` with full-line `//` comments removed.
-    ///
-    /// The page comments deliberately *name* the bug they warn about, so the
-    /// assertions below must not see them. Only full-line comments are stripped,
-    /// which also avoids being fooled by `//` inside URLs such as `ws://`.
-    fn page_source_without_comments() -> String {
-        INDEX_HTML
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n")
+    // The old `viewer_page_reads_kind_from_the_track` test asserted on the
+    // hand-written viewer page's source. That page is gone: the page is now a
+    // bundled React app, and grepping minified output for `track.kind` would be
+    // vacuous -- it would pass for the wrong reasons. The guard now lives in the
+    // frontend suite, next to the `pc.ontrack` handler it protects
+    // (`src/lib/viewerSession.test.ts`); WEBUI.md keeps the checklist.
+
+    // ---- admin control plane -------------------------------------------------
+
+    /// In-memory `SessionControl`, so the admin API can be exercised without a
+    /// capture backend (which would need a real display and a live session).
+    #[derive(Default)]
+    struct FakeControl {
+        running: Mutex<bool>,
+        pending: Mutex<Vec<ViewerIdentifier>>,
+        viewing: Mutex<Vec<ViewerIdentifier>>,
     }
 
-    /// The viewer page must take the track kind from the track.
-    ///
-    /// `RTCTrackEvent` has no `kind` of its own -- the kind lives on
-    /// `event.track`. Reading `ev.kind` (as the page once did) leaves every
-    /// branch in `pc.ontrack` unreachable, so `<video>.srcObject` is never set:
-    /// the overlay is hidden anyway and the viewer sees a black screen while the
-    /// frames decode perfectly. See `docs/troubleshooting.md`.
-    #[test]
-    fn viewer_page_reads_kind_from_the_track() {
-        let page = page_source_without_comments();
-
-        assert!(
-            page.contains("track.kind"),
-            "webui/index.html must decide video vs audio by the track's kind"
-        );
-        assert!(
-            page.contains("video.srcObject"),
-            "webui/index.html must attach the video track to the <video> element"
-        );
-
-        for wrong in ["ev.kind", "event.kind", "evt.kind"] {
-            assert!(
-                !page.contains(wrong),
-                "webui/index.html reads `{wrong}`, but RTCTrackEvent has no `kind`: \
-                 no track would ever be attached and the viewer shows a black screen. \
-                 Use `track.kind`."
-            );
+    impl FakeControl {
+        fn with_pending(uuid: &str, name: &str) -> Self {
+            let control = FakeControl::default();
+            control.push_pending(uuid, name);
+            control
         }
+
+        fn push_pending(&self, uuid: &str, name: &str) {
+            self.pending.lock().unwrap().push(ViewerIdentifier {
+                uuid: uuid.to_string(),
+                name: name.to_string(),
+            });
+        }
+    }
+
+    /// Remove `uuid` from `list`, or explain why it is not there.
+    fn take_viewer(
+        list: &Mutex<Vec<ViewerIdentifier>>,
+        uuid: &str,
+        reason: &str,
+    ) -> Result<ViewerIdentifier, String> {
+        let mut list = list.lock().unwrap();
+        let index = list
+            .iter()
+            .position(|viewer| viewer.uuid == uuid)
+            .ok_or_else(|| format!("{uuid} is {reason}"))?;
+        Ok(list.remove(index))
+    }
+
+    #[async_trait::async_trait]
+    impl SessionControl for FakeControl {
+        fn is_running(&self) -> bool {
+            *self.running.lock().unwrap()
+        }
+
+        fn room_id(&self) -> Option<String> {
+            Some("desk".to_string())
+        }
+
+        fn room_password(&self) -> Option<String> {
+            Some("pass".to_string())
+        }
+
+        fn invite_link(&self) -> Option<String> {
+            Some("http://127.0.0.1:8765/?room=desk&pwd=pass".to_string())
+        }
+
+        fn auto_accept(&self) -> bool {
+            false
+        }
+
+        async fn start_session(&self) {
+            *self.running.lock().unwrap() = true;
+        }
+
+        async fn stop_session(&self) {
+            *self.running.lock().unwrap() = false;
+        }
+
+        async fn pending_viewers(&self) -> Vec<ViewerIdentifier> {
+            self.pending.lock().unwrap().clone()
+        }
+
+        async fn viewing_viewers(&self) -> Vec<ViewerIdentifier> {
+            self.viewing.lock().unwrap().clone()
+        }
+
+        async fn accept_viewer(&self, uuid: String) -> Result<(), String> {
+            let viewer = take_viewer(&self.pending, &uuid, "not waiting for a decision")?;
+            self.viewing.lock().unwrap().push(viewer);
+            Ok(())
+        }
+
+        async fn decline_viewer(&self, uuid: String) -> Result<(), String> {
+            take_viewer(&self.pending, &uuid, "not waiting for a decision")?;
+            Ok(())
+        }
+
+        async fn kick_viewer(&self, uuid: String) -> Result<(), String> {
+            take_viewer(&self.viewing, &uuid, "not viewing")?;
+            Ok(())
+        }
+    }
+
+    /// Without `webui.admin_password` the admin surface does not exist at all --
+    /// not "exists and denies", but absent.
+    #[tokio::test]
+    async fn admin_routes_are_absent_without_a_secret() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(serve(listener, None));
+
+        let (status, _) = admin_request(port, "GET", "/admin", None, None).await;
+        assert_eq!(
+            status, 404,
+            "the admin page must not be served without a secret"
+        );
+
+        let (status, _) = admin_request(port, "GET", "/api/admin/state", None, None).await;
+        assert_eq!(
+            status, 404,
+            "the admin API must not be served without a secret"
+        );
+
+        let (status, body) = admin_request(port, "GET", "/", None, None).await;
+        assert_eq!(status, 200, "the viewer page must keep working");
+        assert!(body.contains("Mira Sharer"));
+
+        server.abort();
+    }
+
+    /// The viewer passcode is handed to viewers, so it must not authenticate the
+    /// operator -- and neither may a non-Bearer scheme.
+    #[tokio::test]
+    async fn admin_requires_the_bearer_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let admin = AdminState::new(Arc::new(FakeControl::default()), Some(SECRET.to_string()))
+            .expect("a non-empty secret enables the admin plane");
+        let server = tokio::spawn(serve(listener, Some(admin)));
+
+        let (status, _) = admin_request(port, "GET", "/api/admin/state", None, None).await;
+        assert_eq!(status, 401, "missing credentials must be rejected");
+
+        let (status, _) = admin_request(port, "GET", "/api/admin/state", Some("wrong"), None).await;
+        assert_eq!(status, 401, "a wrong secret must be rejected");
+
+        let (status, _) = http_request(
+            port,
+            "GET",
+            "/api/admin/state",
+            &[("Authorization", "Basic czNjcmV0")],
+            None,
+        )
+        .await;
+        assert_eq!(status, 401, "only the Bearer scheme may authenticate");
+
+        let (status, body) =
+            admin_request(port, "GET", "/api/admin/state", Some(SECRET), None).await;
+        assert_eq!(status, 200);
+        let state: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(state["running"], false);
+        assert_eq!(state["room"], "desk");
+        assert_eq!(state["autoAccept"], false);
+        assert!(state["pending"].as_array().unwrap().is_empty());
+
+        // The page itself carries no secret, so it needs no token.
+        let (status, body) = admin_request(port, "GET", "/admin", None, None).await;
+        assert_eq!(status, 200);
+        assert!(body.contains("Mira Sharer"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn admin_session_commands_reach_the_control() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let control = Arc::new(FakeControl::default());
+        let admin =
+            AdminState::new(control.clone(), Some(SECRET.to_string())).expect("admin enabled");
+        let server = tokio::spawn(serve(listener, Some(admin)));
+
+        let (status, _) =
+            admin_request(port, "POST", "/api/admin/session/start", Some(SECRET), None).await;
+        assert_eq!(status, 204);
+        assert!(
+            *control.running.lock().unwrap(),
+            "start must reach the control"
+        );
+
+        let (_, body) = admin_request(port, "GET", "/api/admin/state", Some(SECRET), None).await;
+        let state: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(state["running"], true);
+        assert_eq!(
+            state["inviteLink"],
+            "http://127.0.0.1:8765/?room=desk&pwd=pass"
+        );
+
+        let (status, _) =
+            admin_request(port, "POST", "/api/admin/session/stop", Some(SECRET), None).await;
+        assert_eq!(status, 204);
+        assert!(
+            !*control.running.lock().unwrap(),
+            "stop must reach the control"
+        );
+
+        server.abort();
+    }
+
+    /// An admin page can hold a viewer list that is minutes stale, so every verb
+    /// has to answer 404 for a viewer that is gone -- never panic, never 500.
+    #[tokio::test]
+    async fn admin_viewer_commands_tolerate_stale_uuids() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let control = Arc::new(FakeControl::with_pending("viewer-1", "Phone"));
+        control.push_pending("viewer-2", "Laptop");
+        let admin =
+            AdminState::new(control.clone(), Some(SECRET.to_string())).expect("admin enabled");
+        let server = tokio::spawn(serve(listener, Some(admin)));
+
+        // decline drops a pending viewer
+        let (status, _) = admin_request(
+            port,
+            "POST",
+            "/api/admin/viewers/viewer-2/decline",
+            Some(SECRET),
+            None,
+        )
+        .await;
+        assert_eq!(status, 204);
+        assert_eq!(control.pending.lock().unwrap().len(), 1);
+
+        // accept moves one from pending to viewing
+        let (status, _) = admin_request(
+            port,
+            "POST",
+            "/api/admin/viewers/viewer-1/accept",
+            Some(SECRET),
+            None,
+        )
+        .await;
+        assert_eq!(status, 204);
+
+        let (_, body) = admin_request(port, "GET", "/api/admin/state", Some(SECRET), None).await;
+        let state: Value = serde_json::from_str(&body).unwrap();
+        assert!(state["pending"].as_array().unwrap().is_empty());
+        assert_eq!(state["viewing"][0]["uuid"], "viewer-1");
+        assert_eq!(state["viewing"][0]["name"], "Phone");
+
+        // The page is now stale: the same click must be a clean 404.
+        let (status, body) = admin_request(
+            port,
+            "POST",
+            "/api/admin/viewers/viewer-1/accept",
+            Some(SECRET),
+            None,
+        )
+        .await;
+        assert_eq!(status, 404);
+        assert!(
+            body.contains("not waiting"),
+            "the error should name the reason, got: {body}"
+        );
+
+        for verb in ["accept", "decline", "kick"] {
+            let path = format!("/api/admin/viewers/ghost/{verb}");
+            let (status, _) = admin_request(port, "POST", &path, Some(SECRET), None).await;
+            assert_eq!(status, 404, "{verb} on an unknown viewer must be 404");
+        }
+
+        // kick drops it from viewing, and a second kick is a clean 404
+        let (status, _) = admin_request(
+            port,
+            "POST",
+            "/api/admin/viewers/viewer-1/kick",
+            Some(SECRET),
+            None,
+        )
+        .await;
+        assert_eq!(status, 204);
+        assert!(control.viewing.lock().unwrap().is_empty());
+
+        let (status, _) = admin_request(
+            port,
+            "POST",
+            "/api/admin/viewers/viewer-1/kick",
+            Some(SECRET),
+            None,
+        )
+        .await;
+        assert_eq!(status, 404);
+
+        server.abort();
+    }
+
+    // ---- dependency-free HTTP client -----------------------------------------
+
+    /// `http_request` with the admin `Authorization` header filled in.
+    async fn admin_request(
+        port: u16,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+        body: Option<&str>,
+    ) -> (u16, String) {
+        let bearer = token.map(|token| format!("Bearer {token}"));
+        let headers: Vec<(&str, &str)> = match bearer.as_deref() {
+            Some(value) => vec![("Authorization", value)],
+            None => Vec::new(),
+        };
+
+        http_request(port, method, path, &headers, body).await
+    }
+
+    /// A hand-rolled HTTP/1.1 client, so the tests need no `reqwest`.
+    async fn http_request(
+        port: u16,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<&str>,
+    ) -> (u16, String) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let body = body.unwrap_or("");
+        let mut request =
+            format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+        for (name, value) in headers {
+            request.push_str(name);
+            request.push_str(": ");
+            request.push_str(value);
+            request.push_str("\r\n");
+        }
+        request.push_str(&format!("Content-Length: {}\r\n\r\n", body.len()));
+        request.push_str(body);
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        stream.write_all(request.as_bytes()).await.unwrap();
+
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).await.unwrap();
+        let raw = String::from_utf8_lossy(&raw).to_string();
+
+        let status = raw
+            .split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .unwrap_or(0);
+        let body = raw
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body.to_string())
+            .unwrap_or_default();
+
+        (status, body)
     }
 
     // plain TCP GET / to avoid adding a dev-dependency
     async fn reqwest_free_get(port: u16) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .unwrap();
-        stream
-            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-            .await
-            .unwrap();
-        let mut buf = Vec::new();
-        stream.read_to_end(&mut buf).await.unwrap();
-        String::from_utf8_lossy(&buf).to_string()
+        http_request(port, "GET", "/", &[], None).await.1
     }
 }

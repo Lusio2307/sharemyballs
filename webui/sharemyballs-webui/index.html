@@ -1,0 +1,31 @@
+<!doctype html>
+<!--
+  `class="dark"` is what makes Chakra's semantic tokens take their dark values:
+  `--chakra-colors-fg` is `black` under `:root` but `gray.50` under `.dark` (see
+  the `dark` condition in Chakra's preset-base). Without it the page renders
+  near-black text on the black background. The app is dark-only -- the viewer
+  surface is a black canvas -- so this is a static class, not a runtime toggle.
+  The old TanStack Start scaffold injected this class with a script; that script
+  is gone, so it lives here.
+-->
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Dark scrollbars, native form controls and the input caret. -->
+    <style>
+      html {
+        color-scheme: dark;
+      }
+    </style>
+    <!--
+      The title is asserted by the Rust test that GETs `/`
+      (`signaller_relay_roundtrip` in src/webui/mod.rs), so keep it in sync.
+    -->
+    <title>Mira Sharer</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

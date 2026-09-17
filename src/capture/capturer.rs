@@ -78,6 +78,22 @@ impl Capturer {
         }
     }
 
+    /// The live signaller, if a session is running.
+    ///
+    /// Exists for callers that need to await a signaller call *without* holding
+    /// the lock that guards this `Capturer`: a `std::sync::MutexGuard` is not
+    /// `Send`, so holding one across an `await` makes the whole future
+    /// non-`Send` and it cannot be used from an axum handler.
+    pub fn signaller_handle(&self) -> Option<Arc<dyn Signaller + Send + Sync>> {
+        match self.signaller.try_lock() {
+            Ok(signaller) => signaller.as_ref().cloned(),
+            Err(e) => {
+                error!("Failed to lock signaller: {}", e);
+                None
+            }
+        }
+    }
+
     pub fn run(&mut self) {
         let args = self.args.clone();
         let config = self.config.clone();

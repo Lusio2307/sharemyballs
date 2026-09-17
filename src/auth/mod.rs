@@ -117,23 +117,51 @@ impl ViewerManager {
     pub async fn get_pending_viewers(&self) -> Vec<ViewerIdentifier> {
         self.pending_viewers.lock().await.clone()
     }
-    async fn send_viewer_auth_result(&self, viewer: ViewerIdentifier, permit: bool) {
-        self.auth_result_senders
+    /// Hand the operator's decision to the waiting `authenticate` future.
+    ///
+    /// Returns `Err` when the viewer is no longer waiting -- it left, was
+    /// already decided, or the session stopped. The GUI only ever offered a
+    /// decision for a viewer it had just listed, but an admin page can hold a
+    /// stale list for minutes, so this has to be a recoverable error rather
+    /// than a panic.
+    async fn send_viewer_auth_result(
+        &self,
+        viewer: ViewerIdentifier,
+        permit: bool,
+    ) -> std::result::Result<(), String> {
+        // Clone the sender out of the map so the lock is not held across the
+        // `await` below.
+        let sender = self
+            .auth_result_senders
             .lock()
             .await
             .get(&viewer.uuid)
-            .unwrap()
+            .cloned();
+
+        let Some(sender) = sender else {
+            return Err(format!(
+                "{} is no longer waiting for a decision",
+                viewer.uuid
+            ));
+        };
+
+        sender
             .send(permit)
             .await
-            .expect("failed to send result");
+            .map_err(|_| format!("{} is no longer connected", viewer.uuid))
     }
-    pub async fn permit_viewer(&self, viewer: ViewerIdentifier) {
-        self.send_viewer_auth_result(viewer, true).await;
+    pub async fn permit_viewer(&self, viewer: ViewerIdentifier) -> std::result::Result<(), String> {
+        self.send_viewer_auth_result(viewer, true).await?;
         (self.notify_update)();
+        Ok(())
     }
-    pub async fn decline_viewer(&self, viewer: ViewerIdentifier) {
-        self.send_viewer_auth_result(viewer, false).await;
+    pub async fn decline_viewer(
+        &self,
+        viewer: ViewerIdentifier,
+    ) -> std::result::Result<(), String> {
+        self.send_viewer_auth_result(viewer, false).await?;
         (self.notify_update)();
+        Ok(())
     }
     pub async fn clear(&self) {
         self.viewing_viewers.lock().await.clear();

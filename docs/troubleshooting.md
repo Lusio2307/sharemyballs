@@ -38,15 +38,20 @@ console.log('srcObject', v.srcObject, 'size', v.videoWidth, v.videoHeight);
 already hidden the overlay — so it looks like a black stage rather than like
 "Waiting for stream…".
 
-Cause: `pc.ontrack` in `webui/index.html` branching on `ev.kind`. `RTCTrackEvent` has no
-`kind` of its own (only `receiver`, `track`, `streams`, `transceiver`), so `ev.kind` is
-`undefined`: neither branch runs, `video.srcObject` is never set, and the handler hides the
-overlay anyway. The official viewer at
-`deploy/external/viewer/src/components/App/viewmodel.ts` reads `event.track.kind` and is
-correct — do the same.
+Cause: `pc.ontrack` branching on `ev.kind`. `RTCTrackEvent` has no `kind` of its own (only
+`receiver`, `track`, `streams`, `transceiver`), so `ev.kind` is `undefined`: neither branch
+runs, `video.srcObject` is never set, and the handler hides the overlay anyway. The official
+viewer at `deploy/external/viewer/src/components/App/viewmodel.ts` reads `event.track.kind`
+and is correct — do the same.
 
-Fix: branch on `ev.track.kind`, and only reveal the stage for a *video* track. Guarded by
-`viewer_page_reads_kind_from_the_track` in `src/webui/mod.rs`.
+Fix: branch on `ev.track.kind`, and only reveal the stage for a *video* track.
+
+> This is a **porting hazard, not a live bug** at the moment. The viewer that carried the fix
+> was retired when the page became a React SPA (`webui/sharemyballs-webui/`, see `WEBUI.md`),
+> and nothing currently attaches a video track. The test that guarded it
+> (`viewer_page_reads_kind_from_the_track`, which grepped the old page source) went with the
+> page: grepping a minified bundle would pass for the wrong reasons. The port must bring back
+> both the handler and its test; `WEBUI.md` keeps the full checklist.
 
 ### [B] DTLS handshake fails (`invalid named curve`)
 
@@ -73,9 +78,16 @@ signalling or approval.
 
 ### The page is embedded in the binary
 
-`src/webui/mod.rs` pulls `webui/index.html` in with `include_str!`. After editing the page
-you must rebuild and restart the app (`pwsh -File scripts/build-windows.ps1`); reloading the
-browser tab is not enough.
+`src/webui/mod.rs` pulls the built SPA in with `include_str!`
+(`webui/sharemyballs-webui/dist/index.html`, produced by `bun run build`). After editing
+anything under `webui/sharemyballs-webui/src/` you must rebuild the page *and* restart the
+app (`pwsh -File scripts/build-windows.ps1`); reloading the browser tab is not enough.
+
+If `cargo check` reports that file missing, the SPA has not been built yet — see `WEBUI.md`.
+
+A page that loads but renders blank usually means the *dev template* got embedded instead of
+a build: it references `/src/main.tsx`, which the embedded server does not serve. The
+`signaller_relay_roundtrip` test asserts against exactly that mistake.
 
 ## No audio in the viewer (known bug, not fixed)
 

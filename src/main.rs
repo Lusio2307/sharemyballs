@@ -5,16 +5,19 @@ extern crate core;
 extern crate log;
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use directories::ProjectDirs;
 use iced::{Application, Settings};
 
-use crate::capture::capturer::Args;
+use crate::capture::capturer::{Args, Capturer};
 use crate::capture::ScreenCapture;
 use crate::gui::app::App;
 use crate::output::OutputSink;
 use crate::result::Result;
+use crate::session::AppControl;
+use crate::webui::AdminState;
 
 mod auth;
 mod capture;
@@ -25,6 +28,7 @@ mod inputs;
 mod output;
 mod performance_profiler;
 mod result;
+mod session;
 mod signaller;
 mod webui;
 
@@ -52,11 +56,35 @@ async fn main() {
     let args = Args::parse();
     let config = config::load(config_path(&args).as_path()).unwrap();
 
+    // One capturer, two operator surfaces: the iced GUI drives it directly, and
+    // the embedded server reaches it through `AppControl` for `/admin`.
+    //
+    // `notify_update` still pokes the GUI's update subscription. The sender is
+    // leaked so that it lives as long as the process, matching the previous
+    // version that built it inside `App::new`; a full channel means a refresh is
+    // already queued, so a dropped poke is correct and must not panic.
+    let (update_sender, update_receiver) = tokio::sync::mpsc::channel::<()>(10);
+    let update_sender = Box::leak(Box::new(update_sender));
+    let capturer = Arc::new(Mutex::new(Capturer::new(
+        args,
+        config.clone(),
+        Arc::new(move || {
+            let _ = update_sender.try_send(());
+        }),
+    )));
+    let viewer_manager = capturer.lock().unwrap().get_viewer_manager();
+
     if config.webui.enabled {
         let port = config.webui.port;
         let bind = config.webui.bind.clone();
+        // `AdminState::new` yields None when no secret is configured, which is
+        // what leaves `/admin` and `/api/admin/*` unregistered (fail closed).
+        let admin = AdminState::new(
+            Arc::new(AppControl::new(capturer.clone(), viewer_manager)),
+            config.webui.admin_password.clone(),
+        );
         tokio::spawn(async move {
-            if let Err(e) = webui::start(&bind, port).await {
+            if let Err(e) = webui::start(&bind, port, admin).await {
                 error!(
                     "Failed to start webui on {bind}:{port}: {e} (falling back to configured signaller)"
                 );
@@ -78,7 +106,7 @@ async fn main() {
             ),
             ..Default::default()
         },
-        flags: (args, config),
+        flags: (capturer, update_receiver),
         default_font: Default::default(),
         default_text_size: 20.0,
         text_multithreading: false,

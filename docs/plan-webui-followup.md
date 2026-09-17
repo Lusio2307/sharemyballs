@@ -4,6 +4,11 @@ Status: **done; verified in Chrome on Windows.** Companion to
 `plan-local-webui.md`. See `vendor/README.md` for the DTLS change and
 `tests/dtls_curve_selection.rs` for the regression tests.
 
+> **Superseded in part (web UI).** The DTLS analysis and fix below are untouched and still
+> valid. The page it refers to no longer exists as `webui/index.html`: the web UI is now the
+> bundled SPA at `webui/sharemyballs-webui/`, and the `pc.ontrack` fix went into retirement
+> along with the old page. `WEBUI.md` carries the checklist for porting that behaviour back.
+
 ## TL;DR
 
 Two independent bugs produced the same "black screen":

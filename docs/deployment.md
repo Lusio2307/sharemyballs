@@ -58,11 +58,20 @@ auto_start = true
 enabled = true
 bind = "127.0.0.1"
 public_url = "https://stream.example.com/"
+admin_password = "<a different secret>"
 ```
 
 `bind` stays on loopback: Caddy is what faces the network, and it terminates TLS
 for you. Set `public_url` to the address viewers use, so the invite link in the
 GUI is correct.
+
+Set `admin_password` to drive the session from a browser: `https://<domain>/admin`
+then serves the operator page (start/stop sharing, accept or decline viewers).
+Use a **different** secret from the viewer passcode — viewers are given that one.
+It travels as an `Authorization` header on every admin request, so serve the
+admin page over TLS; over plain HTTP on a LAN anyone on that network can read it.
+Leaving the key unset does not just disable a button: the admin routes are not
+registered, so `/admin` and `/api/admin/*` return 404.
 
 Add your coturn instance to `[[ice_servers]]` (see `config.toml.example`). Leave
 it empty if every viewer is on the LAN.
@@ -125,6 +134,9 @@ No domain, no Caddy and no coturn are needed. Three things are:
 bind = "0.0.0.0"
 # So the Invite tab shows a link other devices can actually open:
 public_url = "http://192.168.1.20:8765/"
+# Optional: drive the session from a phone at http://192.168.1.20:8765/admin.
+# Sent in the clear over plain HTTP -- see the TLS note in the section above.
+# admin_password = "<a different secret>"
 ```
 
 Find the address with `ipconfig`. Without `public_url` the invite link keeps

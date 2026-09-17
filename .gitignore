@@ -6,6 +6,7 @@ third_party
 *.exe
 *.dmg
 .idea/
+.tmp
 
 # Downloaded artifacts (FFmpeg shared build, etc.)
 /.cache/

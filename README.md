@@ -101,6 +101,16 @@ compile. On Windows two scripts handle everything; see
 Then, simply run `cargo run --release` (or the built
 `target\release\mira_sharer.exe --config config.toml` on Windows).
 
+The embedded web UI is inlined into the binary at compile time, so it has to be
+built before cargo runs it (needs [bun](https://bun.sh) >= 1.2):
+
+```sh
+cd webui/sharemyballs-webui && bun install --frozen-lockfile && bun run build
+```
+
+`scripts/build-windows.ps1` and `make webui-build` do this step for you; see
+[WEBUI.md](WEBUI.md).
+
 ## Configure
 Configuration file is by default `config.toml`; copy
 [config.toml.example](config.toml.example) to start, and see the preset configs
@@ -125,7 +135,11 @@ tracked in [docs/roadmap.md](docs/roadmap.md).
 
 ## Local WebUI
 
-By default, the sharer starts an embedded local web server (loopback only, no third-party server needed) that serves a built-in viewer page and acts as the signalling server for it. Media still flows P2P via WebRTC between the sharer and the browser — the local server only handles signalling.
+By default, the sharer starts an embedded local web server (loopback only, no third-party server needed) that serves the web UI and acts as the signalling server for it. Media flows P2P via WebRTC between the sharer and the browser — the local server only handles signalling.
+
+> **Work in progress:** the page served at `/` is currently a canvas shell with a
+> fullscreen control. The WebRTC viewer is being rebuilt as a React SPA, so the
+> Invite Link does not play the stream yet. See [WEBUI.md](WEBUI.md).
 
 ```toml
 [webui]
@@ -133,11 +147,14 @@ enabled = true   # set to false to use the external (mirashare) signaller/viewer
 port = 8765
 bind = "127.0.0.1"   # use "0.0.0.0" to expose the page to the LAN
 # public_url = "https://stream.example.com/"   # base URL for the invite link
+# admin_password = "…"   # enables /admin: start/stop, accept/decline/kick viewers
 ```
 
-To use it: start sharing, then open the **Invite Link** shown on the sharing page (or just `http://127.0.0.1:8765/` and enter the room id and passcode), and accept the pending viewer in the app — or set `auto_accept = true` to skip that step. Setting `webui.enabled = false` restores the original mirashare flow. If the port is already in use, the error is logged and the app continues with the configured `signaller_url`.
+To use it: start sharing, then open the **Invite Link** shown on the sharing page (or just `http://127.0.0.1:8765/`), and accept the pending viewer in the app — or set `auto_accept = true` to skip that step. Setting `webui.enabled = false` restores the original mirashare flow. If the port is already in use, the error is logged and the app continues with the configured `signaller_url`.
 
 If the page stays black after you approve a viewer, start with [docs/troubleshooting.md](docs/troubleshooting.md) — the stream is usually fine and the diagnosis is a couple of `getStats()` calls.
+
+Setting `webui.admin_password` also turns on an operator page at `/admin` (e.g. `http://127.0.0.1:8765/admin`), which starts and stops sharing and accepts, declines or kicks viewers — so the session can be driven from a phone. It authenticates with that password alone (never the viewer passcode), and when the key is unset the admin routes are not served at all. See [WEBUI.md](WEBUI.md).
 
 ## License
 

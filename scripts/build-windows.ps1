@@ -56,6 +56,31 @@ Write-Host "FFMPEG_LIB_DIR     = $env:FFMPEG_LIB_DIR"
 
 Set-Location $RepoRoot
 
+# The web UI is inlined into the binary with include_str! (see build.rs), and
+# its dist/ is gitignored, so it has to be built before cargo reads it.
+$WebuiDir = Join-Path $RepoRoot 'webui\sharemyballs-webui'
+$WebuiIndex = Join-Path $WebuiDir 'dist\index.html'
+
+Write-Host 'Building the web UI with bun...'
+# Same native-stderr caveat as the cargo call below: bun writes progress to
+# stderr, so relax the preference and check exit codes explicitly.
+$webuiPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+Push-Location $WebuiDir
+try {
+    bun install --frozen-lockfile
+    if ($LASTEXITCODE -ne 0) { throw "bun install failed with exit code $LASTEXITCODE" }
+    bun run build
+    if ($LASTEXITCODE -ne 0) { throw "bun run build failed with exit code $LASTEXITCODE" }
+} finally {
+    Pop-Location
+    $ErrorActionPreference = $webuiPreference
+}
+
+if (-not (Test-Path $WebuiIndex)) {
+    throw "bun run build did not produce $WebuiIndex"
+}
+
 # Cargo writes its progress to stderr, and PowerShell converts native stderr into
 # error records. With $ErrorActionPreference = 'Stop' that aborts the script
 # mid-build -- for example as soon as the caller redirects the output

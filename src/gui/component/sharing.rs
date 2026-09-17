@@ -111,7 +111,9 @@ impl<'a> Component<'a> for SharingPage {
                 let viewer_manager = props.viewer_manager.clone();
                 tokio::task::block_in_place(move || {
                     handle.block_on(async move {
-                        viewer_manager.decline_viewer(viewer_id).await;
+                        if let Err(e) = viewer_manager.decline_viewer(viewer_id).await {
+                            warn!("Failed to decline viewer: {e}");
+                        }
                     })
                 });
             }
@@ -120,7 +122,9 @@ impl<'a> Component<'a> for SharingPage {
                 let viewer_manager = props.viewer_manager.clone();
                 tokio::task::block_in_place(move || {
                     handle.block_on(async move {
-                        viewer_manager.permit_viewer(viewer_id).await;
+                        if let Err(e) = viewer_manager.permit_viewer(viewer_id).await {
+                            warn!("Failed to accept viewer: {e}");
+                        }
                     })
                 });
             }

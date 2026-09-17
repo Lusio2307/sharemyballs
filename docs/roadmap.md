@@ -6,10 +6,14 @@ tracked as todos or issues.
 
 Two constraints apply to everything below:
 
-- **No web build step.** `webui/index.html` is vanilla JS + inline CSS served straight from
-  the binary via `include_str!`. Anything added to the pages must be either hand-written or
-  a vendored file the server serves as-is. A bundler is a big change — decide explicitly
-  before introducing one.
+- **The web UI is a bundled SPA (decided — this supersedes the earlier "no web build step"
+  constraint).** `webui/sharemyballs-webui/` is a client-only React + Vite + TanStack Router
+  + Chakra UI project, built with bun into a single self-contained `dist/index.html` that is
+  still inlined into the binary via `include_str!`. The bundler was introduced deliberately:
+  the page outgrew hand-written vanilla JS, and single-file output preserves the "no runtime
+  files next to the binary" property. Keep it one file — no dynamic imports, no manual
+  chunks. See `WEBUI.md` for the build step and for the checklist of viewer behaviour that
+  still has to be ported onto the SPA.
 - **Windows is the reference platform** for capture (WGC). macOS/Linux backends exist but
   are unverified here; don't delete them on the assumption they are dead (see M3).
 
@@ -73,43 +77,54 @@ phone, and lose the entire GPU/windowing dependency tree.
 
 ### 2A. Decide the shape (the open question)
 
-**Recommendation: one server, two documents, shared viewer module.** Serve `/` (viewer,
-unchanged, the thing you hand to other people) and `/admin` (a separate document that
-embeds the same media code and adds controls). The shared code moves to a served
-`webui/viewer.js` that both pages load — still no build step.
+**Recommendation: one server, two routes in the SPA.** Serve `/` (viewer, the thing you hand
+to other people) and `/admin` (a route that embeds the same media code and adds controls).
+The shared code lives in framework-agnostic modules under
+`webui/sharemyballs-webui/src/` (protocol + media), imported by both routes. The old plan — a
+served `webui/viewer.js` with no build step — is obsolete now that the page is a bundled SPA
+(see `WEBUI.md`).
+
+The server has **no SPA fallback**, so `/admin` is registered as its own Rust route serving
+the same built document. The auth gate turned out to belong to 2B, not 2C.
 
 Why not "extend the current page with an admin panel": the viewer page's audience is
 untrusted (you send its URL to other people), and the admin page's is not. Keeping them
-separate documents keeps the privileged UI out of any page that can be shared by accident,
+separate routes keeps the privileged UI out of any page that can be shared by accident,
 and makes the auth check a property of one route rather than of one DOM subtree. The cost is
-one extra HTML file and a small shared JS module.
+one route and a shared module.
 
-Decide before starting 2A.2. **Done when:** the choice is written down here and the
-consequences (routes, auth, files) are fixed.
+**Decided and implemented (v1).** `/admin` is a route in the same bundle, served by
+`GET /admin`, gated per request by the admin secret, and control-only — it does not show the
+live stream, because the viewer has not been ported back yet. Consequence worth stating: the
+privileged *code* therefore ships to viewers as well, so the gate is the server's 401/404, not
+the page's absence. A separate admin document remains a possible later refinement.
 
 ### 2B. Backend: make the app admin-able
 
 Today the webui server has no access to the app at all:
 
-- **M2B.1 — Wire the server to the app.** `main.rs` starts `webui::start(bind, port)` before
-  the `Capturer` exists (the GUI builds it inside `App::new`). Construct the `Capturer` in
-  `main`, share a handle (`Arc<...>`, verify `Send`) and pass it into `webui::start`. The
-  existing `Capturer` methods are already the right API — they just need an owner other than
-  the iced app. Done when: an unauthenticated `/admin` route can read `is_running()`.
-- **M2B.2 — Admin auth, fail closed.** The viewer passcode must not double as the admin
-  secret (every viewer knows it). Add `[webui] admin_password` (or a token); when unset, the
-  admin routes must not exist. Recommend `Authorization: Bearer` + `sessionStorage`, and
-  loopback-only as the default when no admin secret is configured.
-- **M2B.3 — Admin push channel.** `notify_update: Arc<dyn Fn()>` currently pokes an iced
-  subscription. Keep the signature and point it at a `broadcast` that feeds a `/admin/ws`
-  socket, so pending/viewer/state changes reach the page without polling. Done when: a new
-  pending viewer appears on the admin page with no refresh.
-- **M2B.4 — Command surface.** One JSON command per admin action, mapping 1:1 onto methods
+- **M2B.1 — Wire the server to the app.** **Done.** `main` now builds the `Capturer` as an
+  `Arc<Mutex<Capturer>>` and shares it: the iced app drives it directly, and the server
+  reaches it through `AppControl` in `src/session.rs`, behind the `SessionControl` trait, so
+  the routes can be tested against a fake with no capture backend. Iced's flags became
+  `(Arc<Mutex<Capturer>>, Receiver<()>)`; `Args`/`Config` ride along inside the `Capturer`.
+- **M2B.2 — Admin auth, fail closed.** **Done.** `[webui] admin_password` plus
+  `Authorization: Bearer` (constant-time compare, never logged), with the secret held in
+  `sessionStorage`. With no usable secret the routes are not registered at all, so `/admin`
+  and `/api/admin/*` 404 — covered by a test. Loopback-only was rejected: it would make the
+  page useless from a phone, which is the point of the milestone.
+- **M2B.3 — Admin push channel.** **Deferred on purpose; v1 polls instead.** The page calls
+  `/api/admin/state` every 2 s, which already satisfies "a new pending viewer appears with no
+  refresh" without a second WebSocket, a `broadcast` threaded through `ViewerManager` and
+  `WebSocketSignaller`, or a token in a WS query string. `notify_update` still pokes iced and
+  is untouched. Revisit if the poll ever shows up in a profile.
+- **M2B.4 — Command surface.** **Done, except display selection**, which is deliberately not
+  exposed until M2B.5 is fixed. One HTTP command per admin action, mapping 1:1 onto methods
   that already exist:
 
   | GUI element today | Backing API |
   | --- | --- |
-  | Display picker | `available_displays` / `selected_display` / `select_display` |
+  | Display picker | not exposed — see M2B.5 |
   | Start Sharing | `Capturer::run` |
   | End | `Capturer::shutdown` |
   | Room / Passcode / Invite Link (+ copy) | `get_room_id` / `get_room_password` / `get_invite_link` |
@@ -117,7 +132,8 @@ Today the webui server has no access to the app at all:
   | Kick a viewing viewer | `Capturer::kick_viewer` + `ViewerManager::kick_viewer` |
   | Live refresh | `notify_update` → `/admin/ws` (M2B.3) |
 
-- **M2B.5 — Fix display selection before exposing it.** On the WGC backend,
+- **M2B.5 — Fix display selection before exposing it.** **Still open, and the reason `/admin`
+  has no display picker.** On the WGC backend,
   `WGCScreenCapture::select_display` builds a new `CaptureEngine` and stores it, but
   `start_capture` builds a *fresh* engine from `self.item`, which is still display 0 from
   `new()`. So the current picker has no effect on what is captured on Windows — an admin
@@ -153,6 +169,10 @@ Today the webui server has no access to the app at all:
 
 **Acceptance:** no window, no `iced` anywhere in the tree, and every action the old GUI
 offered is available from `/admin` to an authenticated operator, from another device.
+
+**Status:** 2A and 2B are **done** — the admin surface exists and is tested. 2C (remove the
+GUI) and 2D (unattended operation) remain; until they land the iced app stays as the fallback
+operator surface, which is also what keeps `webui.enabled = false` working.
 
 ---
 

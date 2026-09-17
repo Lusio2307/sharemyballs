@@ -71,6 +71,13 @@ pub struct WebuiConfig {
     /// `https://stream.example.com/`. Defaults to `http://<bind>:<port>/`.
     #[serde(default)]
     pub public_url: Option<String>,
+    /// Secret for the `/admin` control plane. When unset (or empty) the admin
+    /// page and its API are not served at all.
+    ///
+    /// Failing closed is deliberate: the viewer passcode is handed to every
+    /// viewer, so it must never double as the admin secret.
+    #[serde(default)]
+    pub admin_password: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -220,6 +227,7 @@ fn default_webui() -> WebuiConfig {
         port: default_webui_port(),
         bind: default_webui_bind(),
         public_url: None,
+        admin_password: None,
     }
 }
 
@@ -306,6 +314,10 @@ mod tests {
         assert_eq!(config.webui.port, 8765);
         assert_eq!(config.webui.bind, "127.0.0.1");
         assert_eq!(config.webui.public_url, None);
+        assert_eq!(
+            config.webui.admin_password, None,
+            "the admin control plane must fail closed unless a secret is configured"
+        );
 
         assert!(
             config.ice_servers.is_empty(),
@@ -325,6 +337,7 @@ auto_start = true
 [webui]
 bind = "0.0.0.0"
 public_url = "https://stream.example.com/"
+admin_password = "s3cret-admin"
 "#,
         )
         .unwrap();
@@ -338,6 +351,7 @@ public_url = "https://stream.example.com/"
             config.webui.public_url.as_deref(),
             Some("https://stream.example.com/")
         );
+        assert_eq!(config.webui.admin_password.as_deref(), Some("s3cret-admin"));
     }
 
     /// The bundled presets are copied verbatim by users. `toml` rejects
